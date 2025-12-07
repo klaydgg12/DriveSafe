@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { GoogleOAuthProvider } from "@react-oauth/google"; // <--- 1. Import this
 import HomePage from "./pages/HomePage";
 import FeaturesPage from "./pages/FeaturesPage";
 import AboutPage from "./pages/AboutPage";
@@ -7,6 +8,9 @@ import SignUpPage from "./pages/SignUpPage";
 import DashboardPage from "./pages/DashboardPage";
 import BackupHistoryPage from "./pages/BackupHistoryPage";
 import "./App.css";
+
+// <--- 2. Add your Client ID here
+const CLIENT_ID = "";
 
 function App() {
   const [currentPage, setCurrentPage] = useState("home");
@@ -63,9 +67,12 @@ function App() {
   };
 
   return (
-    <div style={{ width: "100vw", height: "100vh", overflow: "auto" }}>
-      {renderPage()}
-    </div>
+    // <--- 3. Wrap everything. This component is invisible and won't break your CSS.
+    <GoogleOAuthProvider clientId={CLIENT_ID}>
+      <div style={{ width: "100vw", height: "100vh", overflow: "auto" }}>
+        {renderPage()}
+      </div>
+    </GoogleOAuthProvider>
   );
 }
 

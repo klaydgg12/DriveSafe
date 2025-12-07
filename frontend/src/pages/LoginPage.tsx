@@ -2,6 +2,7 @@
 // Login page for DriveSafe
 
 import React, { useState } from "react";
+import { useGoogleLogin } from "@react-oauth/google"; // <--- 1. Import the hook
 import "../App.css";
 
 const LoginPage = () => {
@@ -9,11 +10,46 @@ const LoginPage = () => {
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
 
+  // <--- 2. Add the Google Login Logic here
+  const googleLogin = useGoogleLogin({
+    flow: 'auth-code',
+    // ADD THIS LINE BELOW to ask for Drive permissions
+    scope: "https://www.googleapis.com/auth/drive.readonly", 
+    onSuccess: async (codeResponse) => {
+      console.log("Google Code Received:", codeResponse.code);
+      
+      try {
+        const response = await fetch('http://localhost:5000/auth/google', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ code: codeResponse.code }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          console.log("Backend Login Success:", data);
+          window.location.hash = "dashboard";
+        } else {
+          // If it fails, print why
+          console.error("Backend Error Details:", data);
+          alert("Login Failed: " + (data.error || JSON.stringify(data)));
+        }
+      } catch (error) {
+        console.error("Network error:", error);
+      }
+    },
+    onError: () => {
+      console.log('Login Failed');
+    },
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Handle login logic here
+    // Handle manual login logic here
     console.log("Login submitted", { email, password, rememberMe });
-    // Redirect to dashboard after login
     window.location.hash = "dashboard";
   };
 
@@ -69,8 +105,8 @@ const LoginPage = () => {
             <p className="login-subtitle">Sign in to access your backups</p>
           </div>
 
-          {/* Sign in with Google Button */}
-          <button className="btn-google" onClick={() => window.location.hash = "dashboard"}>
+          {/* Sign in with Google Button - UPDATED ONCLICK */}
+          <button className="btn-google" onClick={() => googleLogin()}> 
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M19.6 10.2273C19.6 9.51818 19.5364 8.83636 19.4182 8.18182H10V12.05H15.3818C15.15 13.3 14.4455 14.3591 13.3864 15.0682V17.5773H16.6182C18.5091 15.8364 19.6 13.2727 19.6 10.2273Z" fill="#4285F4"/>
               <path d="M10 20C12.7 20 14.9636 19.1045 16.6182 17.5773L13.3864 15.0682C12.4909 15.6682 11.3455 16.0227 10 16.0227C7.39545 16.0227 5.19091 14.2636 4.40455 11.9H1.06364V14.4909C2.70909 17.7591 6.09091 20 10 20Z" fill="#34A853"/>
