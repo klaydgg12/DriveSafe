@@ -107,7 +107,7 @@ The application will be available at `http://localhost:5173`
 | Lyrech A. Laspiñas | UI/UX - Frontend Developer / Backend Developer | lyrech.laspinas@cit.edu | @lyrech |
 | Louis Drey F. Castañeto | UI/UX - Frontend Developer / Backend Developer | louisdrey.castaneto@cit.edu | @louisdrey |
 | John Earl F. Mandawe | UI/UX - Frontend Developer / Backend Developer | johnearl.mandawe@cit.edu | @johnearl |
-| Clyde Nixon Jumawan | UI/UX - Frontend Developer / Backend Developer | clydenixon.jumawan@cit.edu | @clydenixon |
+| Clyde Nixon Jumawan | UI/UX - Frontend Developer / Backend Developer | clydenixon.jumawan@cit.edu | @klaydgg12 |
 | Mark Joenylle B. Cortes | UI/UX - Frontend Developer / Backend Developer | markjoenylle.cortes@cit.edu | @markjoenylle |
 
 ## Project Information
