@@ -2,7 +2,7 @@
 // Login page for DriveSafe
 
 import React, { useState } from "react";
-import { useGoogleLogin } from "@react-oauth/google"; // <--- 1. Import the hook
+import { useGoogleLogin } from "@react-oauth/google";
 import "../App.css";
 
 const LoginPage = () => {
@@ -10,11 +10,11 @@ const LoginPage = () => {
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
 
-  // <--- 2. Add the Google Login Logic here
   const googleLogin = useGoogleLogin({
     flow: 'auth-code',
-    // ADD THIS LINE BELOW to ask for Drive permissions
-    scope: "https://www.googleapis.com/auth/drive.readonly", 
+    scope: "https://www.googleapis.com/auth/drive.readonly",
+    // @ts-ignore
+    prompt: 'consent', 
     onSuccess: async (codeResponse) => {
       console.log("Google Code Received:", codeResponse.code);
       
@@ -31,9 +31,12 @@ const LoginPage = () => {
 
         if (response.ok) {
           console.log("Backend Login Success:", data);
+          
+          // 👇 THIS IS THE MISSING LINE! 👇
+          localStorage.setItem('access_token', data.access_token); 
+          
           window.location.hash = "dashboard";
         } else {
-          // If it fails, print why
           console.error("Backend Error Details:", data);
           alert("Login Failed: " + (data.error || JSON.stringify(data)));
         }
@@ -48,7 +51,6 @@ const LoginPage = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Handle manual login logic here
     console.log("Login submitted", { email, password, rememberMe });
     window.location.hash = "dashboard";
   };
@@ -59,7 +61,6 @@ const LoginPage = () => {
 
   return (
     <div className="drivesafe-login-page">
-      {/* Header Section */}
       <header className="header">
         <div className="container">
           <div className="logo-container">
@@ -82,17 +83,14 @@ const LoginPage = () => {
         </div>
       </header>
 
-      {/* Login Modal Overlay */}
       <div className="login-overlay">
         <div className="login-modal">
-          {/* Close Button */}
           <button className="login-close-btn" onClick={handleClose}>
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M15 5L5 15M5 5L15 15" stroke="#64748b" strokeWidth="2" strokeLinecap="round"/>
             </svg>
           </button>
 
-          {/* Modal Header */}
           <div className="login-header">
             <div className="login-logo">
               <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -105,7 +103,6 @@ const LoginPage = () => {
             <p className="login-subtitle">Sign in to access your backups</p>
           </div>
 
-          {/* Sign in with Google Button - UPDATED ONCLICK */}
           <button className="btn-google" onClick={() => googleLogin()}> 
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M19.6 10.2273C19.6 9.51818 19.5364 8.83636 19.4182 8.18182H10V12.05H15.3818C15.15 13.3 14.4455 14.3591 13.3864 15.0682V17.5773H16.6182C18.5091 15.8364 19.6 13.2727 19.6 10.2273Z" fill="#4285F4"/>
@@ -116,31 +113,19 @@ const LoginPage = () => {
             <span>Sign in with Google</span>
           </button>
 
-          {/* Divider */}
           <div className="login-divider">
             <span>or continue with email</span>
           </div>
 
-          {/* Login Form */}
           <form className="login-form" onSubmit={handleSubmit}>
-            {/* Email Field */}
             <div className="form-group">
               <div className="input-icon">
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M2.5 6.66667L10 11.6667L17.5 6.66667M3.33333 15H16.6667C17.5871 15 18.3333 14.2538 18.3333 13.3333V6.66667C18.3333 5.74619 17.5871 5 16.6667 5H3.33333C2.41286 5 1.66667 5.74619 1.66667 6.66667V13.3333C1.66667 14.2538 2.41286 15 3.33333 15Z" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </div>
-              <input
-                type="email"
-                className="form-input"
-                placeholder="your.email@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
+              <input type="email" className="form-input" placeholder="your.email@example.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
             </div>
-
-            {/* Password Field */}
             <div className="form-group">
               <div className="input-icon">
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -148,41 +133,18 @@ const LoginPage = () => {
                   <path d="M5.83333 9.16667V5.83333C5.83333 4.72826 6.27232 3.66846 7.05372 2.88706C7.83512 2.10565 8.89493 1.66667 10 1.66667C11.1051 1.66667 12.1649 2.10565 12.9463 2.88706C13.7277 3.66846 14.1667 4.72826 14.1667 5.83333V9.16667" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </div>
-              <input
-                type="password"
-                className="form-input"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
+              <input type="password" className="form-input" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} required />
             </div>
-
-            {/* Remember Me and Forgot Password */}
             <div className="form-options">
               <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                />
+                <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
                 <span>Remember me</span>
               </label>
               <a href="#" className="forgot-password">Forgot password?</a>
             </div>
-
-            {/* Sign In Button */}
-            <button type="submit" className="btn btn-primary btn-login">
-              Sign In
-            </button>
+            <button type="submit" className="btn btn-primary btn-login">Sign In</button>
           </form>
 
-          {/* Sign Up Link */}
-          <div className="login-signup">
-            <p>Don't have an account? <a href="#signup" onClick={(e) => { e.preventDefault(); window.location.hash = "signup"; }}>Sign up</a></p>
-          </div>
-
-          {/* Privacy Notice */}
           <div className="login-privacy">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M8 1.33333L2.66667 4V7.33333C2.66667 10.3 4.96667 13.0333 8 14.6667C11.0333 13.0333 13.3333 10.3 13.3333 7.33333V4L8 1.33333Z" fill="#10b981" stroke="#10b981" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>

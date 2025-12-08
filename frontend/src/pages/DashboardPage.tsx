@@ -1,11 +1,94 @@
 // DashboardPage.tsx
 // Dashboard page for DriveSafe after login
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import "../App.css";
 
 const DashboardPage = () => {
+  // 1. State to hold the data from Python
+  const [files, setFiles] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [isBackingUp, setIsBackingUp] = useState(false);
+
+  // 2. Fetch data from Python Backend on load
+  // Inside DashboardPage.tsx
+
+  useEffect(() => {
+    const fetchDriveFiles = async () => {
+      console.log("--- FRONTEND DEBUG: Starting Fetch... ---"); // Spy 1
+      
+      const token = localStorage.getItem('access_token');
+      console.log("--- FRONTEND DEBUG: Token found?", token ? "YES" : "NO"); // Spy 2
+
+      if (!token) {
+        console.error("--- FRONTEND ERROR: No token! Aborting fetch. ---");
+        return;
+      }
+
+      setLoading(true);
+      try {
+        console.log("--- FRONTEND DEBUG: Sending request to Backend... ---"); // Spy 3
+        const response = await fetch('http://localhost:5000/drive/files', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        console.log("--- FRONTEND DEBUG: Response Status:", response.status); // Spy 4
+        const data = await response.json();
+        console.log("--- FRONTEND DEBUG: Data received:", data); // Spy 5
+        
+        if (data.files) {
+          setFiles(data.files);
+          setStats(data.ai_stats);
+        }
+      } catch (error) {
+        console.error("--- FRONTEND ERROR: Connection Failed:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchDriveFiles();
+  }, []);
+  const handleStartBackup = async () => {
+  if (files.length === 0) {
+    alert("No files found to backup! Please add files to your Google Drive first.");
+    return;
+  }
+
+  setIsBackingUp(true);
+  const token = localStorage.getItem('access_token');
+
+  try {
+    const response = await fetch('http://localhost:5000/drive/backup', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok) {
+      alert(`Backup Successful!\nFile: ${data.filename}\nSize: ${data.size}`);
+      // Redirect to history to see it
+      window.location.hash = "backup-history";
+    } else {
+      alert("Backup Failed: " + data.error);
+    }
+  } catch (error) {
+    console.error("Backup error:", error);
+    alert("Network error during backup.");
+  } finally {
+    setIsBackingUp(false);
+  }
+};
+
   const handleLogout = () => {
+    // In a real app, you might want to clear the token too
+    localStorage.removeItem('access_token');
     window.location.hash = "";
   };
 
@@ -96,29 +179,97 @@ const DashboardPage = () => {
               </div>
             </div>
 
-            {/* Metrics */}
+            {/* Metrics - NOW CONNECTED TO REAL AI DATA */}
             <div className="dashboard-metrics">
               <div className="dashboard-metric-card metric-blue">
-                <div className="metric-label">Files Ready</div>
-                <div className="metric-value">87 files</div>
+                <div className="metric-label">Files Found</div>
+                <div className="metric-value">
+                  {loading ? "Scanning..." : `${files.length} files`}
+                </div>
               </div>
               <div className="dashboard-metric-card metric-purple">
-                <div className="metric-label">Est. Size</div>
-                <div className="metric-value">245 MB</div>
+                <div className="metric-label">Academic Files (AI)</div>
+                <div className="metric-value">
+                  {loading ? "..." : (stats ? stats.Academic : 0)}
+                </div>
               </div>
               <div className="dashboard-metric-card metric-purple">
-                <div className="metric-label">Est. Time</div>
-                <div className="metric-value">~2 min</div>
+                <div className="metric-label">Personal Files (AI)</div>
+                <div className="metric-value">
+                  {loading ? "..." : (stats ? stats.Personal : 0)}
+                </div>
+              </div>
+            </div>
+            {/* --- NEW: FILE PREVIEW LIST --- */}
+            <div style={{ marginTop: '20px', marginBottom: '20px' }}>
+              <h3 style={{ fontSize: '16px', color: '#1e293b', marginBottom: '10px' }}>
+                Detected Files ({files.length})
+              </h3>
+              
+              <div style={{ 
+                border: '1px solid #e2e8f0', 
+                borderRadius: '8px', 
+                maxHeight: '200px', 
+                overflowY: 'auto',
+                background: '#f8fafc' 
+              }}>
+                {files.length === 0 ? (
+                  <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>
+                    Scanning for files...
+                  </div>
+                ) : (
+                  files.map((file) => (
+                    <div key={file.id} style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center',
+                      padding: '10px 15px',
+                      borderBottom: '1px solid #e2e8f0',
+                      fontSize: '14px',
+                      background: 'white'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
+                        {/* Simple Icon based on AI Category */}
+                        <span>
+                          {file.category === 'Academic' ? '📚' : 
+                           file.category === 'Personal' ? '🖼️' : '📄'}
+                        </span>
+                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px', fontWeight: 500 }}>
+                          {file.name}
+                        </span>
+                      </div>
+                      
+                      {/* The AI Tag */}
+                      <span style={{ 
+                        fontSize: '12px', 
+                        padding: '2px 8px', 
+                        borderRadius: '12px',
+                        backgroundColor: file.category === 'Academic' ? '#dbeafe' : 
+                                         file.category === 'Personal' ? '#fce7f3' : '#f1f5f9',
+                        color: file.category === 'Academic' ? '#1e40af' : 
+                               file.category === 'Personal' ? '#be185d' : '#475569',
+                        fontWeight: 600
+                      }}>
+                        {file.category || "Analyzing..."}
+                      </span>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
             {/* Start Backup Button */}
-            <button className="btn-start-backup">
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M6 4L14 10L6 16V4Z" fill="white"/>
-              </svg>
-              <span>Start Backup</span>
-            </button>
+            <button 
+  className="btn-start-backup" 
+  onClick={handleStartBackup} 
+  disabled={isBackingUp || loading}
+  style={{ opacity: isBackingUp ? 0.7 : 1 }}
+>
+  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M6 4L14 10L6 16V4Z" fill="white"/>
+  </svg>
+  <span>{isBackingUp ? "Backing up..." : "Start Backup"}</span>
+</button>
 
             {/* Backup Process */}
             <div className="dashboard-process">

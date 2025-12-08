@@ -4,6 +4,12 @@
 import React from "react";
 
 const HomePage = () => {
+  
+  // 1. Function to handle navigation to Sign In
+  const handleGetStarted = () => {
+    window.location.hash = "signin";
+  };
+
   return (
     <div className="drivesafe-landing-page">
       {/* Header Section */}
@@ -24,7 +30,10 @@ const HomePage = () => {
             <a href="#features">Features</a>
             <a href="#about">About</a>
             <a href="#signin">Sign In</a>
-            <button className="btn btn-primary btn-header">Get Started</button>
+            {/* 2. Added onClick here */}
+            <button className="btn btn-primary btn-header" onClick={handleGetStarted}>
+              Get Started
+            </button>
           </nav>
         </div>
       </header>
@@ -32,7 +41,7 @@ const HomePage = () => {
       {/* Hero Section */}
       <section className="hero" id="home">
         <div className="container">
-          {/* Two-column layout with headline on left and sign-in content on right */}
+          {/* Two-column layout */}
           <div className="hero-layout">
             <div className="hero-content">
               <div className="badge-container">
@@ -101,13 +110,14 @@ const HomePage = () => {
               </div>
             </div>
             
-            {/* Right Column - Combined Container */}
+            {/* Right Column */}
             <div className="hero-sidebar">
               <div className="combined-container">
                 <h2 className="container-title">Get Started</h2>
                 <p className="container-subtitle">Sign in with your Google account to start backing up your files</p>
                 
-                <button className="btn btn-primary btn-medium btn-full-width">
+                {/* 3. Added onClick here too */}
+                <button className="btn btn-primary btn-medium btn-full-width" onClick={handleGetStarted}>
                   Get Started Free <span className="arrow">→</span>
                 </button>
                 
