@@ -5,7 +5,7 @@ import './index.css'
 import App from './App.tsx'
 
 // REPLACE THIS WITH YOUR ACTUAL CLIENT ID FROM GOOGLE CONSOLE
-const CLIENT_ID = "";
+const CLIENT_ID = "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com";
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
