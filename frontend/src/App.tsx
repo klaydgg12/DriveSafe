@@ -1,16 +1,16 @@
 import { useState, useEffect } from "react";
-import { GoogleOAuthProvider } from "@react-oauth/google"; // <--- 1. Import this
+import { GoogleOAuthProvider } from "@react-oauth/google"; 
 import HomePage from "./pages/HomePage";
 import FeaturesPage from "./pages/FeaturesPage";
 import AboutPage from "./pages/AboutPage";
 import LoginPage from "./pages/LoginPage";
-import SignUpPage from "./pages/SignUpPage";
+// REMOVED: import SignUpPage from "./pages/SignUpPage"; <--- No longer needed
 import DashboardPage from "./pages/DashboardPage";
 import BackupHistoryPage from "./pages/BackupHistoryPage";
 import "./App.css";
 
-// <--- 2. Add your Client ID here
-const CLIENT_ID = "";
+// Use environment variable or fallback to string (Best Practice)
+const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 function App() {
   const [currentPage, setCurrentPage] = useState("home");
@@ -25,8 +25,6 @@ function App() {
         setCurrentPage("about");
       } else if (hash === "signin") {
         setCurrentPage("signin");
-      } else if (hash === "signup") {
-        setCurrentPage("signup");
       } else if (hash === "dashboard") {
         setCurrentPage("dashboard");
       } else if (hash === "backup-history") {
@@ -34,6 +32,7 @@ function App() {
       } else {
         setCurrentPage("home");
       }
+      // REMOVED: Check for "signup" hash
     };
 
     // Set initial page based on hash
@@ -55,8 +54,7 @@ function App() {
         return <AboutPage />;
       case "signin":
         return <LoginPage />;
-      case "signup":
-        return <SignUpPage />;
+      // REMOVED: case "signup": return <SignUpPage />;
       case "dashboard":
         return <DashboardPage />;
       case "backup-history":
@@ -67,7 +65,6 @@ function App() {
   };
 
   return (
-    // <--- 3. Wrap everything. This component is invisible and won't break your CSS.
     <GoogleOAuthProvider clientId={CLIENT_ID}>
       <div style={{ width: "100vw", height: "100vh", overflow: "auto" }}>
         {renderPage()}

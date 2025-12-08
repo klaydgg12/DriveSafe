@@ -2,7 +2,7 @@
 // Login page for DriveSafe
 
 import React, { useState } from "react";
-import { useGoogleLogin } from "@react-oauth/google"; // <--- 1. Import the hook
+import { useGoogleLogin } from "@react-oauth/google";
 import "../App.css";
 
 const LoginPage = () => {
@@ -10,10 +10,8 @@ const LoginPage = () => {
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
 
-  // <--- 2. Add the Google Login Logic here
   const googleLogin = useGoogleLogin({
     flow: 'auth-code',
-    // ADD THIS LINE BELOW to ask for Drive permissions
     scope: "https://www.googleapis.com/auth/drive.readonly", 
     onSuccess: async (codeResponse) => {
       console.log("Google Code Received:", codeResponse.code);
@@ -33,7 +31,6 @@ const LoginPage = () => {
           console.log("Backend Login Success:", data);
           window.location.hash = "dashboard";
         } else {
-          // If it fails, print why
           console.error("Backend Error Details:", data);
           alert("Login Failed: " + (data.error || JSON.stringify(data)));
         }
@@ -48,7 +45,6 @@ const LoginPage = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Handle manual login logic here
     console.log("Login submitted", { email, password, rememberMe });
     window.location.hash = "dashboard";
   };
@@ -105,7 +101,7 @@ const LoginPage = () => {
             <p className="login-subtitle">Sign in to access your backups</p>
           </div>
 
-          {/* Sign in with Google Button - UPDATED ONCLICK */}
+          {/* Sign in with Google Button */}
           <button className="btn-google" onClick={() => googleLogin()}> 
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M19.6 10.2273C19.6 9.51818 19.5364 8.83636 19.4182 8.18182H10V12.05H15.3818C15.15 13.3 14.4455 14.3591 13.3864 15.0682V17.5773H16.6182C18.5091 15.8364 19.6 13.2727 19.6 10.2273Z" fill="#4285F4"/>
@@ -121,9 +117,8 @@ const LoginPage = () => {
             <span>or continue with email</span>
           </div>
 
-          {/* Login Form */}
+          {/* Login Form (Visual Only) */}
           <form className="login-form" onSubmit={handleSubmit}>
-            {/* Email Field */}
             <div className="form-group">
               <div className="input-icon">
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -140,7 +135,6 @@ const LoginPage = () => {
               />
             </div>
 
-            {/* Password Field */}
             <div className="form-group">
               <div className="input-icon">
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -158,7 +152,6 @@ const LoginPage = () => {
               />
             </div>
 
-            {/* Remember Me and Forgot Password */}
             <div className="form-options">
               <label className="checkbox-label">
                 <input
@@ -171,18 +164,13 @@ const LoginPage = () => {
               <a href="#" className="forgot-password">Forgot password?</a>
             </div>
 
-            {/* Sign In Button */}
             <button type="submit" className="btn btn-primary btn-login">
               Sign In
             </button>
           </form>
 
-          {/* Sign Up Link */}
-          <div className="login-signup">
-            <p>Don't have an account? <a href="#signup" onClick={(e) => { e.preventDefault(); window.location.hash = "signup"; }}>Sign up</a></p>
-          </div>
+          {/* REMOVED: The "Sign Up" Link section was deleted here */}
 
-          {/* Privacy Notice */}
           <div className="login-privacy">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M8 1.33333L2.66667 4V7.33333C2.66667 10.3 4.96667 13.0333 8 14.6667C11.0333 13.0333 13.3333 10.3 13.3333 7.33333V4L8 1.33333Z" fill="#10b981" stroke="#10b981" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
