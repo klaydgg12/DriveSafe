@@ -50,7 +50,16 @@ def google_auth():
     try:
         flow = Flow.from_client_secrets_file(CLIENT_SECRETS_FILE, scopes=SCOPES, redirect_uri='postmessage')
         flow.fetch_token(code=code)
-        return jsonify({"access_token": flow.credentials.token}), 200
+        # Fetch basic user profile
+        service = build('oauth2', 'v2', credentials=flow.credentials)
+        user_info = service.userinfo().get().execute()
+
+        return jsonify({
+            "access_token": flow.credentials.token,
+            "user_email": user_info.get("email"),
+            "user_name": user_info.get("name"),
+            "user_picture": user_info.get("picture")
+        }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 

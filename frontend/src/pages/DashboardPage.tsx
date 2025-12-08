@@ -10,6 +10,8 @@ const DashboardPage = () => {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [isBackingUp, setIsBackingUp] = useState(false);
+  const [userEmail, setUserEmail] = useState(localStorage.getItem("user_email") || "user@example.com");
+  const [userName, setUserName] = useState(localStorage.getItem("user_name") || "Authenticated via Google");
 
   // 2. Fetch data from Python Backend on load
   // Inside DashboardPage.tsx
@@ -119,8 +121,8 @@ const DashboardPage = () => {
           </div>
           <div className="dashboard-user-section">
             <div className="dashboard-user-info">
-              <div className="dashboard-user-email">user@example.com</div>
-              <div className="dashboard-user-auth">Authenticated via Google</div>
+              <div className="dashboard-user-email">{userEmail}</div>
+              <div className="dashboard-user-auth">{userName}</div>
             </div>
             <button className="dashboard-logout-btn" onClick={handleLogout}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">

@@ -175,12 +175,12 @@ const AboutPage = () => {
               <div className="project-details-grid">
                 <div className="project-detail-item">
                   <h3 className="project-detail-label">Project Release</h3>
-                  <p className="project-detail-value">1.0 (2023)</p>
+                  <p className="project-detail-value">1.0 (2025)</p>
                 </div>
                 
                 <div className="project-detail-item">
                   <h3 className="project-detail-label">Submission Date</h3>
-                  <p className="project-detail-value">September 20, 2023</p>
+                  <p className="project-detail-value">December 15, 2025</p>
                 </div>
                 
                 <div className="project-detail-item">
@@ -211,11 +211,11 @@ const AboutPage = () => {
             
             <div className="footer-column">
               <h4>Developed By</h4>
-              <p>Ly nell A. Lagrimas</p>
-              <p>Louis Orey F. Campañes</p>
-              <p>John Earl P. Abundabar</p>
+              <p>Lyrech James E. Laspiñas</p>
+              <p>Louis Drey F. Castañeto</p>
+              <p>John Earl F. Mandawe</p>
               <p>Clyde Nixon Jumawan</p>
-              <p>Mark Jonyle G. Cortes</p>
+              <p>Mark Joenylle B. Cortes</p>
             </div>
           </div>
           
