@@ -131,7 +131,7 @@ VITE_MAX_BACKUP_HISTORY=5
 
 | Name                    | Role                                           | CIT-U Email                 | GitHub        |
 | ----------------------- | ---------------------------------------------- | --------------------------- | ------------- |
-| Lyrech A. Laspiñas      | UI/UX - Frontend Developer / Backend Developer | lyrech.laspinas@cit.edu     | @lyrech       |
+| Lyrech James E. Laspiñas| UI/UX - Frontend Developer / Backend Developer | lyrech.laspinas@cit.edu     | @lyrech       |
 | Louis Drey F. Castañeto | UI/UX - Frontend Developer / Backend Developer | louisdrey.castaneto@cit.edu | @louisdrey    |
 | John Earl F. Mandawe    | UI/UX - Frontend Developer / Backend Developer | johnearl.mandawe@cit.edu    | @johnearl     |
 | Clyde Nixon Jumawan     | UI/UX - Frontend Developer / Backend Developer | clydenixon.jumawan@cit.edu  | @klaydgg12    |
