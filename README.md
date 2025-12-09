@@ -54,20 +54,20 @@ npm run dev
 Navigate to your backend folder:
 cd backend
 
-1. Create a virtual environment
+# 1. Create a virtual environment
 python -m venv venv
 
-2. Activate the virtual environment
+# 2. Activate the virtual environment
 Windows:
 venv\Scripts\activate
 
-Mac/Linux:
+# Mac/Linux:
 source venv/bin/activate
 
-3. Install required packages
+# 3. Install required packages
 pip install -r requirements.txt
 
-4. Run the backend
+# 4. Run the backend
 python app.py
 ```
 
