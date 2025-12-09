@@ -10,7 +10,7 @@ import BackupHistoryPage from "./pages/BackupHistoryPage";
 import "./App.css";
 
 // Use environment variable or fallback to string (Best Practice)
-const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com";
+const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "314972685252-4s63r50uod7a5ksq1lsj3cpodqschlen.apps.googleusercontent.com";
 
 function App() {
   const [currentPage, setCurrentPage] = useState("home");

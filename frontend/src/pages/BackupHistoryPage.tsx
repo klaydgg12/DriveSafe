@@ -41,6 +41,32 @@ const BackupHistoryPage = () => {
     window.location.hash = "";
   };
 
+  const handleDownload = async (filename: string) => {
+    try {
+      const response = await fetch(`http://localhost:5000/drive/backup/download/${encodeURIComponent(filename)}`);
+      
+      if (!response.ok) {
+        const error = await response.json();
+        alert(`Download failed: ${error.error || "Unknown error"}`);
+        return;
+      }
+
+      // Get the blob and create download link
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error("Download error:", error);
+      alert("Failed to download backup file.");
+    }
+  };
+
   const parseSizeMb = (size?: string) => {
     const num = parseFloat(size || "0");
     return Number.isFinite(num) ? num : 0;
@@ -246,7 +272,7 @@ const BackupHistoryPage = () => {
                     </div>
                   </div>
                   <div className="backup-item-right">
-                    <button className="btn-download">
+                    <button className="btn-download" onClick={() => handleDownload(backup.filename)}>
                       <span>Download</span>
                     </button>
                   </div>
