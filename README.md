@@ -33,18 +33,45 @@ This project is being developed as a capstone project for the College of Compute
 - npm or yarn
 - Google Cloud Project with Drive API enabled
 
-### 2. Installation
+### Frontend Setup (React + Vite)
 
 ```bash
 # Clone the repository
 git clone https://github.com/klaydgg12/DriveSafe.git
-cd drivesafe
+cd DriveSafe/web   # or /frontend depending on folder
 
 # Install dependencies
 npm install
+
+# Running the frontend
+npm run dev
 ```
 
-### 3. Environment Configuration
+
+### Backend Setup (Python + Flask)
+
+```bash
+Navigate to your backend folder:
+cd backend
+
+1. Create a virtual environment
+python -m venv venv
+
+2. Activate the virtual environment
+Windows:
+venv\Scripts\activate
+
+Mac/Linux:
+source venv/bin/activate
+
+3. Install required packages
+pip install -r requirements.txt
+
+4. Run the backend
+python app.py
+```
+
+### 2. Environment Configuration
 
 Create a `.env` file in the root directory:
 
@@ -58,19 +85,7 @@ VITE_BACKUP_RETENTION_DAYS=7
 VITE_MAX_BACKUP_HISTORY=5
 ```
 
-### 4. Running the Application
-
-```bash
-# Development mode
-npm run dev
-
-# Build for production
-npm run build
-```
-
-The application will be available at `http://localhost:5173`
-
-### 5. Google OAuth Setup
+### 3. Google OAuth Setup
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a new project
