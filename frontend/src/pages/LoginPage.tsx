@@ -32,8 +32,10 @@ const LoginPage = () => {
         if (response.ok) {
           console.log("Backend Login Success:", data);
           
-          // 👇 THIS IS THE MISSING LINE! 👇
           localStorage.setItem('access_token', data.access_token); 
+          if (data.user_email) localStorage.setItem('user_email', data.user_email);
+          if (data.user_name) localStorage.setItem('user_name', data.user_name);
+          if (data.user_picture) localStorage.setItem('user_picture', data.user_picture);
           
           window.location.hash = "dashboard";
         } else {
