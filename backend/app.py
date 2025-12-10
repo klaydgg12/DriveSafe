@@ -32,14 +32,33 @@ if not os.path.exists(BACKUP_FOLDER):
 def init_db():
     conn = sqlite3.connect('drivesafe.db')
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS backups 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                  filename TEXT, 
-                  date TEXT, 
-                  file_count INTEGER, 
-                  size_mb TEXT, 
-                  md5 TEXT, 
-                  status TEXT)''')
+    
+    # Check if table exists and verify schema
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='backups'")
+    table_exists = c.fetchone()
+    
+    if table_exists:
+        # Check if all required columns exist
+        c.execute("PRAGMA table_info(backups)")
+        columns = [row[1] for row in c.fetchall()]
+        required_columns = ['id', 'filename', 'date', 'file_count', 'size_mb', 'md5', 'status']
+        
+        # If any column is missing, recreate the table
+        if not all(col in columns for col in required_columns):
+            c.execute("DROP TABLE backups")
+            table_exists = False
+    
+    # Create table if it doesn't exist or was just dropped
+    if not table_exists:
+        c.execute('''CREATE TABLE backups 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                      filename TEXT, 
+                      date TEXT, 
+                      file_count INTEGER, 
+                      size_mb TEXT, 
+                      md5 TEXT, 
+                      status TEXT)''')
+    
     conn.commit()
     conn.close()
 
@@ -83,10 +102,10 @@ def list_files():
         
         print("--- DEBUG: Calling Google Drive API... ---") # Spy Print 3
         
-        # We try a very simple query first (No filters) to see if ANY connection works
+        # Fetch up to 20 files
         results = service.files().list(
-            pageSize=10, 
-            fields="files(id, name)" # Fetch minimum data
+            pageSize=20, 
+            fields="files(id, name, mimeType)" # Include mimeType to detect Google Docs
         ).execute()
         
         files = results.get('files', [])
@@ -131,6 +150,20 @@ def get_history():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/drive/backup/download/<filename>', methods=['GET'])
+def download_backup(filename):
+    try:
+        # Security: prevent directory traversal
+        filename = os.path.basename(filename)
+        file_path = os.path.join(BACKUP_FOLDER, filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({"error": "File not found"}), 404
+        
+        return send_file(file_path, as_attachment=True, download_name=filename)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # --- NEW: THE BACKUP ENGINE ---
 @app.route('/drive/backup', methods=['POST'])
 def create_backup():
@@ -142,8 +175,11 @@ def create_backup():
         creds = Credentials(token)
         service = build('drive', 'v3', credentials=creds)
 
-        # 1. List files to backup (Limit to 10 for testing speed)
-        results = service.files().list(pageSize=10, fields="files(id, name)").execute()
+        # 1. List files to backup (up to 20 files)
+        results = service.files().list(
+            pageSize=20, 
+            fields="files(id, name, mimeType)"
+        ).execute()
         files = results.get('files', [])
 
         if not files:
@@ -156,11 +192,44 @@ def create_backup():
 
         file_count = 0
         
+        # MIME types that need export instead of direct download
+        GOOGLE_DOCS_MIMES = {
+            'application/vnd.google-apps.document': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
+            'application/vnd.google-apps.spreadsheet': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
+            'application/vnd.google-apps.presentation': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',  # .pptx
+            'application/vnd.google-apps.drawing': 'image/png',  # .png
+            'application/vnd.google-apps.script': 'application/vnd.google-apps.script+json',  # Apps Script
+        }
+        
         with zipfile.ZipFile(zip_path, 'w') as zipf:
             for file in files:
                 try:
-                    # Download file content
-                    request_drive = service.files().get_media(fileId=file['id'])
+                    mime_type = file.get('mimeType', '')
+                    
+                    # Check if it's a Google Docs file that needs export
+                    if mime_type in GOOGLE_DOCS_MIMES:
+                        # Export Google Docs file
+                        export_mime = GOOGLE_DOCS_MIMES[mime_type]
+                        request_drive = service.files().export_media(fileId=file['id'], mimeType=export_mime)
+                        
+                        # Determine file extension based on export type
+                        if 'wordprocessingml' in export_mime:
+                            file_ext = '.docx'
+                        elif 'spreadsheetml' in export_mime:
+                            file_ext = '.xlsx'
+                        elif 'presentationml' in export_mime:
+                            file_ext = '.pptx'
+                        elif export_mime == 'image/png':
+                            file_ext = '.png'
+                        else:
+                            file_ext = ''
+                        
+                        filename_with_ext = file['name'] + file_ext if not file['name'].endswith(file_ext) else file['name']
+                    else:
+                        # Regular file download
+                        request_drive = service.files().get_media(fileId=file['id'])
+                        filename_with_ext = file['name']
+                    
                     fh = io.BytesIO()
                     downloader = MediaIoBaseDownload(fh, request_drive)
                     done = False
@@ -169,9 +238,9 @@ def create_backup():
 
                     # Add to Zip
                     fh.seek(0)
-                    zipf.writestr(file['name'], fh.read())
+                    zipf.writestr(filename_with_ext, fh.read())
                     file_count += 1
-                    print(f"Downloaded: {file['name']}")
+                    print(f"Downloaded: {filename_with_ext}")
                 except Exception as e:
                     print(f"Skipped {file['name']}: {e}")
 
