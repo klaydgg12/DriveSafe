@@ -32,7 +32,7 @@ const HomePage = () => {
             <a href="#signin">Sign In</a>
             {/* 2. Added onClick here */}
             <button className="btn btn-primary btn-header" onClick={handleGetStarted}>
-              Get Started
+              Sign in with Google
             </button>
           </nav>
         </div>
@@ -118,7 +118,7 @@ const HomePage = () => {
                 
                 {/* 3. Added onClick here too */}
                 <button className="btn btn-primary btn-medium btn-full-width" onClick={handleGetStarted}>
-                  Get Started Free <span className="arrow">→</span>
+                  Sign in with Google <span className="arrow">→</span>
                 </button>
                 
                 <div className="container-details">
@@ -158,7 +158,7 @@ const HomePage = () => {
               <a href="#">Home</a>
               <a href="#features">Features</a>
               <a href="#about">About</a>
-              <a href="#signin">Sign In</a>
+              
             </div>
             
             <div className="footer-column">

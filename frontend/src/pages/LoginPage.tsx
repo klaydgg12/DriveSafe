@@ -78,7 +78,7 @@ const LoginPage = () => {
             <a href="#features">Features</a>
             <a href="#about">About</a>
             <a href="#signin">Sign In</a>
-            <button className="btn btn-primary btn-header">Get Started</button>
+            <button className="btn btn-primary btn-header">Login with Google!</button>
           </nav>
         </div>
       </header>
