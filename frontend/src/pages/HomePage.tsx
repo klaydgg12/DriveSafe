@@ -29,7 +29,6 @@ const HomePage = () => {
             <a href="#">Home</a>
             <a href="#features">Features</a>
             <a href="#about">About</a>
-            <a href="#signin">Sign In</a>
             {/* 2. Added onClick here */}
             <button className="btn btn-primary btn-header" onClick={handleGetStarted}>
               Get Started
@@ -158,7 +157,6 @@ const HomePage = () => {
               <a href="#">Home</a>
               <a href="#features">Features</a>
               <a href="#about">About</a>
-              <a href="#signin">Sign In</a>
             </div>
             
             <div className="footer-column">

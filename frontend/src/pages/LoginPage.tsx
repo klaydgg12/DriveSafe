@@ -1,15 +1,12 @@
 // LoginPage.tsx
 // Login page for DriveSafe
 
-import React, { useState } from "react";
+import React from "react";
 import { useGoogleLogin } from "@react-oauth/google";
 import "../App.css";
 
 const LoginPage = () => {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(false);
-
+  
   const googleLogin = useGoogleLogin({
     flow: 'auth-code',
     scope: "https://www.googleapis.com/auth/drive.readonly",
@@ -51,12 +48,6 @@ const LoginPage = () => {
     },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log("Login submitted", { email, password, rememberMe });
-    window.location.hash = "dashboard";
-  };
-
   const handleClose = () => {
     window.location.hash = "";
   };
@@ -79,8 +70,9 @@ const LoginPage = () => {
             <a href="#">Home</a>
             <a href="#features">Features</a>
             <a href="#about">About</a>
+            {/* "Sign In" is sufficient for both login and signup */}
             <a href="#signin">Sign In</a>
-            <button className="btn btn-primary btn-header">Get Started</button>
+            <button className="btn btn-primary btn-header" onClick={() => googleLogin()}>Get Started</button>
           </nav>
         </div>
       </header>
@@ -114,38 +106,6 @@ const LoginPage = () => {
             </svg>
             <span>Sign in with Google</span>
           </button>
-
-          <div className="login-divider">
-            <span>or continue with email</span>
-          </div>
-
-          <form className="login-form" onSubmit={handleSubmit}>
-            <div className="form-group">
-              <div className="input-icon">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M2.5 6.66667L10 11.6667L17.5 6.66667M3.33333 15H16.6667C17.5871 15 18.3333 14.2538 18.3333 13.3333V6.66667C18.3333 5.74619 17.5871 5 16.6667 5H3.33333C2.41286 5 1.66667 5.74619 1.66667 6.66667V13.3333C1.66667 14.2538 2.41286 15 3.33333 15Z" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              </div>
-              <input type="email" className="form-input" placeholder="your.email@example.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
-            </div>
-            <div className="form-group">
-              <div className="input-icon">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M15.8333 9.16667H4.16667C3.24619 9.16667 2.5 9.91286 2.5 10.8333V16.6667C2.5 17.5871 3.24619 18.3333 4.16667 18.3333H15.8333C16.7538 18.3333 17.5 17.5871 17.5 16.6667V10.8333C17.5 9.91286 16.7538 9.16667 15.8333 9.16667Z" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M5.83333 9.16667V5.83333C5.83333 4.72826 6.27232 3.66846 7.05372 2.88706C7.83512 2.10565 8.89493 1.66667 10 1.66667C11.1051 1.66667 12.1649 2.10565 12.9463 2.88706C13.7277 3.66846 14.1667 4.72826 14.1667 5.83333V9.16667" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              </div>
-              <input type="password" className="form-input" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} required />
-            </div>
-            <div className="form-options">
-              <label className="checkbox-label">
-                <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
-                <span>Remember me</span>
-              </label>
-              <a href="#" className="forgot-password">Forgot password?</a>
-            </div>
-            <button type="submit" className="btn btn-primary btn-login">Sign In</button>
-          </form>
 
           <div className="login-privacy">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">

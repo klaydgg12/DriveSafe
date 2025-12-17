@@ -4,7 +4,6 @@ import HomePage from "./pages/HomePage";
 import FeaturesPage from "./pages/FeaturesPage";
 import AboutPage from "./pages/AboutPage";
 import LoginPage from "./pages/LoginPage";
-// REMOVED: import SignUpPage from "./pages/SignUpPage"; <--- No longer needed
 import DashboardPage from "./pages/DashboardPage";
 import BackupHistoryPage from "./pages/BackupHistoryPage";
 import "./App.css";

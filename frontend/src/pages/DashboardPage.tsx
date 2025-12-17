@@ -10,18 +10,20 @@ const DashboardPage = () => {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [isBackingUp, setIsBackingUp] = useState(false);
+  
+  // --- NEW: State for Tabs ---
+  const [activeTab, setActiveTab] = useState("All");
+
   const [userEmail, setUserEmail] = useState(localStorage.getItem("user_email") || "user@example.com");
   const [userName, setUserName] = useState(localStorage.getItem("user_name") || "Authenticated via Google");
 
   // 2. Fetch data from Python Backend on load
-  // Inside DashboardPage.tsx
-
   useEffect(() => {
     const fetchDriveFiles = async () => {
-      console.log("--- FRONTEND DEBUG: Starting Fetch... ---"); // Spy 1
+      console.log("--- FRONTEND DEBUG: Starting Fetch... ---");
       
       const token = localStorage.getItem('access_token');
-      console.log("--- FRONTEND DEBUG: Token found?", token ? "YES" : "NO"); // Spy 2
+      console.log("--- FRONTEND DEBUG: Token found?", token ? "YES" : "NO");
 
       if (!token) {
         console.error("--- FRONTEND ERROR: No token! Aborting fetch. ---");
@@ -30,16 +32,16 @@ const DashboardPage = () => {
 
       setLoading(true);
       try {
-        console.log("--- FRONTEND DEBUG: Sending request to Backend... ---"); // Spy 3
+        console.log("--- FRONTEND DEBUG: Sending request to Backend... ---");
         const response = await fetch('http://localhost:5000/drive/files', {
           headers: {
             'Authorization': `Bearer ${token}`
           }
         });
         
-        console.log("--- FRONTEND DEBUG: Response Status:", response.status); // Spy 4
+        console.log("--- FRONTEND DEBUG: Response Status:", response.status);
         const data = await response.json();
-        console.log("--- FRONTEND DEBUG: Data received:", data); // Spy 5
+        console.log("--- FRONTEND DEBUG: Data received:", data);
         
         if (data.files) {
           setFiles(data.files);
@@ -54,42 +56,48 @@ const DashboardPage = () => {
 
     fetchDriveFiles();
   }, []);
+
+  // --- NEW: Filter Logic for Tabs ---
+  const filteredFiles = files.filter(file => {
+    if (activeTab === "All") return true;
+    return file.category === activeTab;
+  });
+
   const handleStartBackup = async () => {
-  if (files.length === 0) {
-    alert("No files found to backup! Please add files to your Google Drive first.");
-    return;
-  }
-
-  setIsBackingUp(true);
-  const token = localStorage.getItem('access_token');
-
-  try {
-    const response = await fetch('http://localhost:5000/drive/backup', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
-    
-    const data = await response.json();
-    
-    if (response.ok) {
-      alert(`Backup Successful!\nFile: ${data.filename}\nSize: ${data.size}`);
-      // Redirect to history to see it
-      window.location.hash = "backup-history";
-    } else {
-      alert("Backup Failed: " + data.error);
+    if (files.length === 0) {
+      alert("No files found to backup! Please add files to your Google Drive first.");
+      return;
     }
-  } catch (error) {
-    console.error("Backup error:", error);
-    alert("Network error during backup.");
-  } finally {
-    setIsBackingUp(false);
-  }
-};
+
+    setIsBackingUp(true);
+    const token = localStorage.getItem('access_token');
+
+    try {
+      const response = await fetch('http://localhost:5000/drive/backup', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        alert(`Backup Successful!\nFile: ${data.filename}\nSize: ${data.size}`);
+        // Redirect to history to see it
+        window.location.hash = "backup-history";
+      } else {
+        alert("Backup Failed: " + data.error);
+      }
+    } catch (error) {
+      console.error("Backup error:", error);
+      alert("Network error during backup.");
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
 
   const handleLogout = () => {
-    // In a real app, you might want to clear the token too
     localStorage.removeItem('access_token');
     window.location.hash = "";
   };
@@ -181,7 +189,7 @@ const DashboardPage = () => {
               </div>
             </div>
 
-            {/* Metrics - NOW CONNECTED TO REAL AI DATA */}
+            {/* Metrics */}
             <div className="dashboard-metrics">
               <div className="dashboard-metric-card metric-blue">
                 <div className="metric-label">Files Found</div>
@@ -202,25 +210,51 @@ const DashboardPage = () => {
                 </div>
               </div>
             </div>
-            {/* --- NEW: FILE PREVIEW LIST --- */}
+
+            {/* --- NEW SECTION: TABS & FILE LIST --- */}
             <div style={{ marginTop: '20px', marginBottom: '20px' }}>
-              <h3 style={{ fontSize: '16px', color: '#1e293b', marginBottom: '10px' }}>
-                Detected Files ({files.length})
-              </h3>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                <h3 style={{ fontSize: '16px', color: '#1e293b', margin: 0 }}>
+                  Detected Files ({filteredFiles.length})
+                </h3>
+                
+                {/* TAB BUTTONS */}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {['All', 'Academic', 'Personal', 'Work'].map(tab => (
+                    <button
+                      key={tab}
+                      onClick={() => setActiveTab(tab)}
+                      style={{
+                        padding: '4px 12px',
+                        borderRadius: '15px',
+                        border: 'none',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        // Active = Blue, Inactive = Gray
+                        backgroundColor: activeTab === tab ? '#2563eb' : '#f1f5f9',
+                        color: activeTab === tab ? 'white' : '#64748b',
+                      }}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+              </div>
               
               <div style={{ 
                 border: '1px solid #e2e8f0', 
                 borderRadius: '8px', 
-                maxHeight: '200px', 
+                maxHeight: '250px', 
                 overflowY: 'auto',
                 background: '#f8fafc' 
               }}>
-                {files.length === 0 ? (
+                {filteredFiles.length === 0 ? (
                   <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>
-                    Scanning for files...
+                    {loading ? "Scanning..." : `No ${activeTab} files found.`}
                   </div>
                 ) : (
-                  files.map((file) => (
+                  filteredFiles.map((file) => (
                     <div key={file.id} style={{ 
                       display: 'flex', 
                       justifyContent: 'space-between', 
@@ -231,19 +265,24 @@ const DashboardPage = () => {
                       background: 'white'
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
-                        {/* Simple Icon based on AI Category */}
                         <span>
                           {file.category === 'Academic' ? '📚' : 
                            file.category === 'Personal' ? '🖼️' : '📄'}
                         </span>
-                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px', fontWeight: 500 }}>
-                          {file.name}
-                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px', fontWeight: 500 }}>
+                            {file.name}
+                          </span>
+                          
+                          {/* --- FIX: CHECK IF SIZE EXISTS TO AVOID "NaN" --- */}
+                          <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+                            {file.size ? (parseInt(file.size) / 1024).toFixed(1) : "0"} KB
+                          </span>
+                        </div>
                       </div>
                       
-                      {/* The AI Tag */}
                       <span style={{ 
-                        fontSize: '12px', 
+                        fontSize: '11px', 
                         padding: '2px 8px', 
                         borderRadius: '12px',
                         backgroundColor: file.category === 'Academic' ? '#dbeafe' : 
@@ -259,19 +298,20 @@ const DashboardPage = () => {
                 )}
               </div>
             </div>
+            {/* --- END NEW SECTION --- */}
 
             {/* Start Backup Button */}
             <button 
-  className="btn-start-backup" 
-  onClick={handleStartBackup} 
-  disabled={isBackingUp || loading}
-  style={{ opacity: isBackingUp ? 0.7 : 1 }}
->
-  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M6 4L14 10L6 16V4Z" fill="white"/>
-  </svg>
-  <span>{isBackingUp ? "Backing up..." : "Start Backup"}</span>
-</button>
+              className="btn-start-backup" 
+              onClick={handleStartBackup} 
+              disabled={isBackingUp || loading}
+              style={{ opacity: isBackingUp ? 0.7 : 1 }}
+            >
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M6 4L14 10L6 16V4Z" fill="white"/>
+              </svg>
+              <span>{isBackingUp ? "Backing up..." : "Start Backup"}</span>
+            </button>
 
             {/* Backup Process */}
             <div className="dashboard-process">

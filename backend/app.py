@@ -62,7 +62,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# ... (Keep your /auth/google route here) ...
 @app.route('/auth/google', methods=['POST'])
 def google_auth():
     code = request.json.get('code')
@@ -82,46 +81,33 @@ def google_auth():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-# ... (Keep your /drive/files route here) ...
-# Inside backend/app.py
-
 @app.route('/drive/files', methods=['GET'])
 def list_files():
-    print("\n--- DEBUG: STARTING FILE LIST CHECK ---") # Spy Print 1
+    print("\n--- DEBUG: STARTING FILE LIST CHECK ---") 
     auth_header = request.headers.get('Authorization')
     if not auth_header: 
-        print("--- DEBUG: FAILED - NO TOKEN ---")
         return jsonify({"error": "No token"}), 401
     
     token = auth_header.split(" ")[1]
-    print(f"--- DEBUG: Token Received (First 10 chars): {token[:10]}...") # Spy Print 2
 
     try:
         creds = Credentials(token)
         service = build('drive', 'v3', credentials=creds)
         
-        print("--- DEBUG: Calling Google Drive API... ---") # Spy Print 3
+        print("--- DEBUG: Calling Google Drive API... ---")
         
-        # Fetch up to 20 files
         results = service.files().list(
             pageSize=20, 
-            fields="files(id, name, mimeType)" # Include mimeType to detect Google Docs
+            fields="files(id, name, mimeType, size)" 
         ).execute()
         
         files = results.get('files', [])
-        print(f"--- DEBUG: GOOGLE SAYS YOU HAVE {len(files)} FILES ---") # Spy Print 4
-        
-        for f in files:
-            print(f"   -> Found file: {f['name']}")
-
-        # If we get here, connection is GOOD. Now do the real logic.
-        # ... (Run your AI logic here as before) ...
+        print(f"--- DEBUG: GOOGLE SAYS YOU HAVE {len(files)} FILES ---")
         
         stats = {"Academic": 0, "Personal": 0, "Other": 0}
         processed_files = []
         
         for f in files:
-            # Re-predict for the frontend
             cat = predict_category(f['name'])
             if cat in stats: stats[cat] += 1
             else: stats["Other"] += 1
@@ -131,11 +117,9 @@ def list_files():
         return jsonify({"files": processed_files, "ai_stats": stats})
 
     except Exception as e:
-        print(f"--- DEBUG: CRITICAL ERROR: {str(e)} ---") # Spy Print 5
-        # This will print the EXACT reason Google is rejecting you to the terminal
+        print(f"--- DEBUG: CRITICAL ERROR: {str(e)} ---")
         return jsonify({"error": str(e)}), 400
 
-# ... (Keep your /history route here) ...
 @app.route('/history', methods=['GET'])
 def get_history():
     try:
@@ -153,7 +137,6 @@ def get_history():
 @app.route('/drive/backup/download/<filename>', methods=['GET'])
 def download_backup(filename):
     try:
-        # Security: prevent directory traversal
         filename = os.path.basename(filename)
         file_path = os.path.join(BACKUP_FOLDER, filename)
         
@@ -164,7 +147,7 @@ def download_backup(filename):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# --- NEW: THE BACKUP ENGINE ---
+# --- MODIFIED: SMART ORGANIZED BACKUP ---
 @app.route('/drive/backup', methods=['POST'])
 def create_backup():
     auth_header = request.headers.get('Authorization')
@@ -175,7 +158,7 @@ def create_backup():
         creds = Credentials(token)
         service = build('drive', 'v3', credentials=creds)
 
-        # 1. List files to backup (up to 20 files)
+        # 1. List 100 files
         results = service.files().list(
             pageSize=20, 
             fields="files(id, name, mimeType)"
@@ -192,55 +175,56 @@ def create_backup():
 
         file_count = 0
         
-        # MIME types that need export instead of direct download
+        # MIME types for Google Docs export
         GOOGLE_DOCS_MIMES = {
-            'application/vnd.google-apps.document': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
-            'application/vnd.google-apps.spreadsheet': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
-            'application/vnd.google-apps.presentation': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',  # .pptx
-            'application/vnd.google-apps.drawing': 'image/png',  # .png
-            'application/vnd.google-apps.script': 'application/vnd.google-apps.script+json',  # Apps Script
+            'application/vnd.google-apps.document': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.google-apps.spreadsheet': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.google-apps.presentation': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.google-apps.drawing': 'image/png',
+            'application/vnd.google-apps.script': 'application/vnd.google-apps.script+json',
         }
         
         with zipfile.ZipFile(zip_path, 'w') as zipf:
             for file in files:
                 try:
+                    # --- NEW: AI CATEGORIZATION ---
+                    category = predict_category(file['name']) 
+                    
                     mime_type = file.get('mimeType', '')
                     
-                    # Check if it's a Google Docs file that needs export
+                    # Handle Google Docs Export
                     if mime_type in GOOGLE_DOCS_MIMES:
-                        # Export Google Docs file
                         export_mime = GOOGLE_DOCS_MIMES[mime_type]
                         request_drive = service.files().export_media(fileId=file['id'], mimeType=export_mime)
                         
-                        # Determine file extension based on export type
-                        if 'wordprocessingml' in export_mime:
-                            file_ext = '.docx'
-                        elif 'spreadsheetml' in export_mime:
-                            file_ext = '.xlsx'
-                        elif 'presentationml' in export_mime:
-                            file_ext = '.pptx'
-                        elif export_mime == 'image/png':
-                            file_ext = '.png'
-                        else:
-                            file_ext = ''
+                        if 'wordprocessingml' in export_mime: file_ext = '.docx'
+                        elif 'spreadsheetml' in export_mime: file_ext = '.xlsx'
+                        elif 'presentationml' in export_mime: file_ext = '.pptx'
+                        elif export_mime == 'image/png': file_ext = '.png'
+                        else: file_ext = ''
                         
                         filename_with_ext = file['name'] + file_ext if not file['name'].endswith(file_ext) else file['name']
                     else:
-                        # Regular file download
                         request_drive = service.files().get_media(fileId=file['id'])
                         filename_with_ext = file['name']
                     
+                    # Download File Stream
                     fh = io.BytesIO()
                     downloader = MediaIoBaseDownload(fh, request_drive)
                     done = False
                     while done is False:
                         status, done = downloader.next_chunk()
 
-                    # Add to Zip
+                    # --- NEW: SAVE INTO FOLDER ---
+                    # e.g., "Academic/Thesis.docx"
+                    archive_path = f"{category}/{filename_with_ext}"
+                    
                     fh.seek(0)
-                    zipf.writestr(filename_with_ext, fh.read())
+                    zipf.writestr(archive_path, fh.read())
+                    
                     file_count += 1
-                    print(f"Downloaded: {filename_with_ext}")
+                    print(f"Downloaded: {archive_path}")
+                    
                 except Exception as e:
                     print(f"Skipped {file['name']}: {e}")
 
