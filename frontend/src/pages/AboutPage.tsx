@@ -1,10 +1,13 @@
 // AboutPage.tsx
 // About page for DriveSafe
 
-import React from "react";
 import "../App.css";
 
 const AboutPage = () => {
+  const handleGetStarted = () => {
+    window.location.hash = "signin";
+  };
+
   return (
     <div className="drivesafe-about-page">
       {/* Header Section */}
@@ -24,8 +27,7 @@ const AboutPage = () => {
             <a href="#">Home</a>
             <a href="#features">Features</a>
             <a href="#about">About</a>
-            <a href="#signin">Sign In</a>
-            <button className="btn btn-primary btn-header">Get Started</button>
+            <button className="btn btn-primary btn-header" onClick={handleGetStarted}>Get Started</button>
           </nav>
         </div>
       </header>

@@ -60,6 +60,10 @@ const featuresData = [
 const FeaturesPage = () => {
   const [selectedFeature, setSelectedFeature] = useState<any>(null);
 
+  const handleGetStarted = () => {
+    window.location.hash = "signin";
+  };
+
   const openModal = (feature: any) => {
     setSelectedFeature(feature);
     document.body.style.overflow = 'hidden'; // Prevent scrolling when modal is open
@@ -89,8 +93,7 @@ const FeaturesPage = () => {
             <a href="#">Home</a>
             <a href="#features">Features</a>
             <a href="#about">About</a>
-            <a href="#signin">Sign In</a>
-            <button className="btn btn-primary btn-header">Get Started</button>
+            <button className="btn btn-primary btn-header" onClick={handleGetStarted}>Get Started</button>
           </nav>
         </div>
       </header>
@@ -183,7 +186,6 @@ const FeaturesPage = () => {
               <a href="#">Home</a>
               <a href="#">Features</a>
               <a href="#about">About</a>
-              <a href="#signin">Sign In</a>
             </div>
             <div className="footer-column">
               <h4>Resources</h4>
