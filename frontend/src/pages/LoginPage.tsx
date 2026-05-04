@@ -35,7 +35,7 @@ const LoginPage = () => {
       {/* Branding top-left */}
       <div className="fixed top-0 left-0 p-6">
         <div className="flex items-center gap-2">
-          <Logo size={28} />
+          <Logo size={36} />
           <span className="text-xl font-bold text-gray-900 tracking-tight">DriveSafe</span>
         </div>
       </div>
@@ -50,7 +50,7 @@ const LoginPage = () => {
 
         <div className="p-10 text-center space-y-8">
           <div className="inline-flex items-center justify-center w-24 h-24 bg-indigo-50 rounded-3xl">
-            <Logo size={48} />
+            <Logo size={64} />
           </div>
           
           <div className="space-y-2">

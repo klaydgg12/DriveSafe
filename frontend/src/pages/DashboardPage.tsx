@@ -59,7 +59,7 @@ const DashboardPage: React.FC = () => {
       <nav className="bg-white/70 backdrop-blur-xl border-b border-gray-200/50 sticky top-0 z-50 transition-all">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Logo size={32} />
+            <Logo size={40} />
             <span className="text-xl font-black text-gray-900 tracking-tight ml-1">DriveSafe</span>
           </div>
           <div className="flex items-center gap-6">
@@ -171,7 +171,7 @@ const DashboardPage: React.FC = () => {
 
       <footer className="mt-auto p-10 border-t border-gray-200/50 bg-white/50 backdrop-blur-md flex flex-col md:flex-row justify-between items-center gap-4 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] relative z-10">
         <div className="flex items-center gap-3">
-          <Logo size={16} className="opacity-70" />
+          <Logo size={24} className="opacity-70" />
           DriveSafe Engine v2.0
         </div>
         <div className="flex gap-8">

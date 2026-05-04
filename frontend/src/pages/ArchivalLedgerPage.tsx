@@ -96,7 +96,7 @@ const ArchivalLedgerPage = () => {
             </button>
             <div className="h-6 w-px bg-gray-200"></div>
             <div className="flex items-center gap-3">
-              <Logo size={28} />
+              <Logo size={36} />
               <span className="text-lg font-black text-gray-900 tracking-tight">Audit Log</span>
             </div>
           </div>

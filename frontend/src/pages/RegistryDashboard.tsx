@@ -169,7 +169,7 @@ const RegistryDashboard: React.FC = () => {
                         </button>
                         <div className="h-6 w-px bg-gray-100"></div>
                         <div className="flex items-center gap-2">
-                            <Logo size={28} />
+                            <Logo size={36} />
                             <span className="text-lg font-bold text-gray-900 tracking-tight ml-1">Capstone Archiver</span>                        </div>
                     </div>
 
