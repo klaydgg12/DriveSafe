@@ -48,14 +48,27 @@ def get_robust_database_uri():
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'drivesafe-secret-key')
 app.config['SQLALCHEMY_DATABASE_URI'] = get_robust_database_uri()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = False
+
+# --- SPLIT DEPLOYMENT CONFIG (Vercel + Hostinger) ---
+FRONTEND_URL = os.getenv('FRONTEND_URL') # e.g., https://drivesafe.vercel.app
+if FRONTEND_URL:
+    # Required for cross-domain cookies (Vercel -> Hostinger)
+    # WARNING: Backend MUST have HTTPS/SSL enabled for this to work
+    app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+    app.config['SESSION_COOKIE_SECURE'] = True
+else:
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    app.config['SESSION_COOKIE_SECURE'] = False
+
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 
 # --- COMPONENT INITIALIZATION ---
 db.init_app(app)
 login_manager = LoginManager(app)
-CORS(app, supports_credentials=True)
+
+# Allow CORS from Vercel
+allowed_origins = [FRONTEND_URL] if FRONTEND_URL else ["*"]
+CORS(app, supports_credentials=True, origins=allowed_origins)
 
 @login_manager.user_loader
 def load_user(user_id):
