@@ -270,20 +270,41 @@ const RegistryDashboard: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-6 bg-slate-50 p-1.5 rounded-2xl border border-slate-200">
-                        <div className="flex items-center gap-2 px-3">
-                            <BookOpen className="w-4 h-4 text-slate-400" />
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Active Sheet</span>
+                    <div className="flex items-center gap-4 bg-slate-50 p-1.5 rounded-2xl border border-slate-200">
+                        {/* Workbook Selector */}
+                        <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 px-3 border-r border-slate-200">
+                                <BookOpen className="w-4 h-4 text-slate-400" />
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Workbook</span>
+                            </div>
+                            <div className="relative group">
+                                <select 
+                                    value={selectedWorkbookId} 
+                                    onChange={(e) => setSelectedWorkbookId(e.target.value)}
+                                    className="appearance-none bg-white border border-transparent text-slate-900 text-sm font-black rounded-xl px-4 py-2 pr-10 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[180px]"
+                                >
+                                    {workbooks.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                                </select>
+                                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none transition-transform group-hover:translate-y-[-40%]" />
+                            </div>
                         </div>
-                        <div className="relative group">
-                            <select 
-                                value={selectedWorkbookId} 
-                                onChange={(e) => setSelectedWorkbookId(e.target.value)}
-                                className="appearance-none bg-white border border-slate-200 text-slate-900 text-sm font-black rounded-xl px-4 py-2 pr-10 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[200px]"
-                            >
-                                {workbooks.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                            </select>
-                            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none transition-transform group-hover:translate-y-[-40%]" />
+
+                        {/* Sheet / Year Selector */}
+                        <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 px-3 border-r border-slate-200">
+                                <Filter className="w-4 h-4 text-slate-400" />
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Sheet</span>
+                            </div>
+                            <div className="relative group">
+                                <select 
+                                    value={selectedYear} 
+                                    onChange={(e) => setSelectedYear(e.target.value)}
+                                    className="appearance-none bg-white border border-transparent text-slate-900 text-sm font-black rounded-xl px-4 py-2 pr-10 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[180px]"
+                                >
+                                    {years.map(y => <option key={y} value={y}>{y}</option>)}
+                                </select>
+                                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none transition-transform group-hover:translate-y-[-40%]" />
+                            </div>
                         </div>
                     </div>
                 </div>
