@@ -49,8 +49,8 @@ const LoginPage = () => {
         </button>
 
         <div className="p-10 text-center space-y-8">
-          <div className="inline-flex items-center justify-center w-24 h-24 bg-indigo-50 rounded-3xl">
-            <Logo size={64} />
+          <div className="inline-flex items-center justify-center w-28 h-28 bg-indigo-50 rounded-3xl">
+            <Logo size={80} />
           </div>
           
           <div className="space-y-2">
