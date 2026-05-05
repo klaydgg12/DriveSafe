@@ -8,7 +8,7 @@ interface LogoProps {
 const Logo: React.FC<LogoProps> = ({ size = 24, className = "" }) => {
   return (
     <div 
-      className={`relative flex items-center justify-center ${className}`} 
+      className={`relative flex-shrink-0 flex items-center justify-center ${className}`} 
       style={{ width: size, height: size }}
     >
       {/* Dynamic Shining/Glow Background Background */}
@@ -19,7 +19,7 @@ const Logo: React.FC<LogoProps> = ({ size = 24, className = "" }) => {
         <img 
           src="/logo.jpg" 
           alt="DriveSafe Logo" 
-          className="w-full h-full object-cover"
+          className="w-full h-full object-contain"
         />
       </div>
 

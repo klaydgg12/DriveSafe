@@ -10,7 +10,8 @@ def migrate():
             ("sdd_text", "LONGTEXT"),
             ("spmp_text", "LONGTEXT"),
             ("std_text", "LONGTEXT"),
-            ("ri_text", "LONGTEXT")
+            ("ri_text", "LONGTEXT"),
+            ("workbook_name", "VARCHAR(255)")
         ]
         
         for col_name, col_type in columns_to_add:

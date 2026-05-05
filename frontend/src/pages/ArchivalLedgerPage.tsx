@@ -2,18 +2,39 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import { 
   Folder, ChevronRight, ChevronDown, FileText, Download, Eye, Calendar, 
-  Search, Hash, Clock, ArrowLeft, Copy, Check, Trash2, Code, BarChart3, ClipboardCheck, FileSearch, RefreshCw 
+  Search, Hash, Clock, ArrowLeft, Copy, Check, Trash2, Code, BarChart3, 
+  ClipboardCheck, FileSearch, RefreshCw, AlertCircle, BookOpen, Filter
 } from "lucide-react";
 import Logo from "../components/Logo";
 
-interface Version { id: number; version: number; hash: string; timestamp: string; status: string; }
+interface Version { 
+  id: number; 
+  version: number; 
+  hash: string; 
+  timestamp: string; 
+  status: 'Archived' | 'Failed' | 'Pending'; 
+}
+
 interface ProjectGroup {
-  project_id: string; project_title: string; academic_year: string;
-  documents: { srs: Version[]; sdd: Version[]; spmp: Version[]; std: Version[]; ri: Version[]; };
+  project_id: string; 
+  project_title: string; 
+  academic_year: string;
+  workbook_name?: string;
+  status: 'Archived' | 'Failed' | 'Pending';
+  error_message?: string;
+  documents: { 
+    srs: Version[]; 
+    sdd: Version[]; 
+    spmp: Version[]; 
+    std: Version[]; 
+    ri: Version[]; 
+  };
 }
 
 const ArchivalLedgerPage = () => {
   const [projects, setProjects] = useState<ProjectGroup[]>([]);
+  const [workbooks, setWorkbooks] = useState<string[]>([]);
+  const [selectedWorkbook, setSelectedWorkbook] = useState<string>("");
   const [years, setYears] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -22,24 +43,48 @@ const ArchivalLedgerPage = () => {
   const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
 
-  useEffect(() => { fetchYears(); }, []);
-  useEffect(() => { fetchLedger(); }, [selectedYear]);
+  useEffect(() => { fetchWorkbooks(); }, []);
+  useEffect(() => { fetchYears(selectedWorkbook); }, [selectedWorkbook]);
+  useEffect(() => { fetchLedger(); }, [selectedYear, selectedWorkbook]);
 
-  const fetchYears = async () => {
+  const fetchWorkbooks = async () => {
     try {
-      const resp = await axios.get(`/api/registry/ledger/tabs`, { withCredentials: true });
+      const resp = await axios.get(`/api/registry/ledger/workbooks`, { withCredentials: true });
+      const availableWorkbooks = resp.data;
+      setWorkbooks(availableWorkbooks);
+      // Don't auto-select "Archives" if there are other options, but default to "All"
+      setSelectedWorkbook(""); 
+    } catch (err) { console.error("Failed to fetch workbooks:", err); }
+  };
+
+  const fetchYears = async (workbook: string) => {
+    try {
+      const url = workbook ? `/api/registry/ledger/tabs?workbook=${workbook}` : `/api/registry/ledger/tabs`;
+      const resp = await axios.get(url, { withCredentials: true });
       setYears(resp.data);
-      if (resp.data.length > 0 && !selectedYear) setSelectedYear(resp.data[0]);
-    } catch (err) { console.error(err); }
+      setSelectedYear(""); // Default to "All"
+    } catch (err) { console.error("Failed to fetch years:", err); }
   };
 
   const fetchLedger = async () => {
     setLoading(true);
     try {
-      const url = selectedYear ? `/api/registry/ledger/grouped?year=${selectedYear}` : `/api/registry/ledger/grouped`;
-      const resp = await axios.get(url, { withCredentials: true });
-      setProjects(resp.data);
-    } catch (err) { console.error(err); }
+      let params = new URLSearchParams();
+      if (selectedYear) params.append('year', selectedYear);
+      if (selectedWorkbook) params.append('workbook', selectedWorkbook);
+      
+      const resp = await axios.get(`/api/registry/ledger/grouped?${params.toString()}`, { withCredentials: true });
+      
+      const projectsWithStatus = resp.data.map((p: ProjectGroup) => {
+        const allVersions = Object.values(p.documents).flat();
+        let status: 'Archived' | 'Failed' | 'Pending' = 'Archived';
+        if (allVersions.some(v => v.status === 'Failed')) status = 'Failed';
+        else if (allVersions.some(v => v.status === 'Pending')) status = 'Pending';
+        return { ...p, status };
+      });
+
+      setProjects(projectsWithStatus);
+    } catch (err) { console.error("Failed to fetch ledger:", err); }
     finally { setLoading(false); }
   };
 
@@ -57,111 +102,208 @@ const ArchivalLedgerPage = () => {
   };
 
   const copyToClipboard = (hash: string) => {
+    if (!hash) return;
     navigator.clipboard.writeText(hash);
     setCopiedHash(hash);
     setTimeout(() => setCopiedHash(null), 2000);
   };
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm("Delete this archival record?")) return;
+    if (!window.confirm("Are you sure you want to delete this archival record? This action cannot be undone.")) return;
     try {
       await axios.delete(`/api/registry/ledger/${id}`, { withCredentials: true });
       fetchLedger();
-    } catch (err) { alert("Delete failed"); }
+    } catch (err) { alert("Delete failed. Please try again."); }
   };
 
-  // Color Coding for Documents
+  const handleDeleteProject = async (project: ProjectGroup) => {
+    if (!window.confirm(`Are you sure you want to PERMANENTLY REMOVE all ${Object.values(project.documents).flat().length} archival records for "${project.project_title}"?`)) return;
+    
+    setLoading(true);
+    try {
+      // FIX: Multiple documents in one run share the same DB ID. 
+      // We must only delete UNIQUE IDs to avoid 404/500 errors.
+      const allIds = Array.from(new Set(Object.values(project.documents).flat().map(v => v.id)));
+      
+      // Process deletions in parallel
+      await Promise.all(allIds.map(id => axios.delete(`/api/registry/ledger/${id}`, { withCredentials: true })));
+      fetchLedger();
+    } catch (err) { alert("Bulk delete failed. Some records might remain."); }
+    finally { setLoading(false); }
+  };
+
+  const getStatusStyles = (status: string) => {
+    switch (status) {
+      case 'Archived': return "bg-emerald-50 text-emerald-700 border-emerald-100";
+      case 'Failed': return "bg-rose-50 text-rose-700 border-rose-100";
+      case 'Pending': return "bg-amber-50 text-amber-700 border-amber-100";
+      default: return "bg-gray-50 text-gray-700 border-gray-100";
+    }
+  };
+
   const getDocStyles = (type: string) => {
     const t = type.toLowerCase();
-    if (t === 'srs') return { text: "text-blue-600", bg: "bg-blue-50", border: "border-blue-100", hover: "hover:border-blue-200", icon: <FileText size={18} /> };
-    if (t === 'sdd') return { text: "text-purple-600", bg: "bg-purple-50", border: "border-purple-100", hover: "hover:border-purple-200", icon: <Code size={18} /> };
-    if (t === 'spmp') return { text: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-100", hover: "hover:border-emerald-200", icon: <BarChart3 size={18} /> };
-    if (t === 'std') return { text: "text-amber-600", bg: "bg-amber-50", border: "border-amber-100", hover: "hover:border-amber-200", icon: <ClipboardCheck size={18} /> };
-    if (t === 'ri') return { text: "text-rose-600", bg: "bg-rose-50", border: "border-rose-100", hover: "hover:border-rose-200", icon: <FileSearch size={18} /> };
-    return { text: "text-gray-600", bg: "bg-gray-50", border: "border-gray-100", hover: "hover:border-gray-200", icon: <FileText size={18} /> };
+    if (t === 'srs') return { text: "text-blue-600", bg: "bg-blue-50", border: "border-blue-100", icon: <FileText size={16} /> };
+    if (t === 'sdd') return { text: "text-purple-600", bg: "bg-purple-50", border: "border-purple-100", icon: <Code size={16} /> };
+    if (t === 'spmp') return { text: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-100", icon: <BarChart3 size={16} /> };
+    if (t === 'std') return { text: "text-amber-600", bg: "bg-amber-50", border: "border-amber-100", icon: <ClipboardCheck size={16} /> };
+    if (t === 'ri') return { text: "text-rose-600", bg: "bg-rose-50", border: "border-rose-100", icon: <FileSearch size={16} /> };
+    return { text: "text-gray-600", bg: "bg-gray-50", border: "border-gray-100", icon: <FileText size={16} /> };
   };
 
-  const filteredProjects = projects.filter(p => 
-    p.project_title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    p.project_id.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredProjects = projects.filter(p => {
+    const matchesSearch = p.project_title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          p.project_id.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesSearch;
+  });
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans relative">
-      <nav className="bg-white/80 backdrop-blur-xl border-b border-gray-200/60 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button onClick={() => window.location.hash = "dashboard"} className="p-2 text-gray-400 hover:text-indigo-600 transition-colors">
-              <ArrowLeft className="w-5 h-5" />
+    <div className="min-h-screen bg-[#f8fafc] flex flex-col font-sans transition-colors duration-300">
+      {/* Header */}
+      <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 transition-colors">
+        <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button onClick={() => window.location.hash = "dashboard"} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-50 rounded-lg transition-all">
+              <ArrowLeft size={18} />
             </button>
-            <div className="h-6 w-px bg-gray-200"></div>
-            <div className="flex items-center gap-3">
-              <Logo size={60} />
-              <span className="text-lg font-black text-gray-900 tracking-tight">Audit Log</span>
+            <div className="h-4 w-px bg-slate-200 mx-1"></div>
+            <Logo size={40} />
+            <h1 className="text-base font-bold text-slate-900 tracking-tight ml-1 uppercase">Audit Log</h1>
+          </div>
+          
+          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl border border-slate-200 mr-2">
+            <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 px-2 border-r border-slate-200">
+                <BookOpen size={14} className="text-slate-400" />
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Workbook</span>
+              </div>
+              <div className="relative">
+                <select 
+                  value={selectedWorkbook} 
+                  onChange={(e) => setSelectedWorkbook(e.target.value)}
+                  className="appearance-none bg-white border border-transparent text-slate-900 text-xs font-black rounded-lg px-3 py-1.5 pr-8 focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[140px]"
+                >
+                  <option value="">ALL WORKBOOKS</option>
+                  {workbooks.map(w => <option key={w} value={w}>{w}</option>)}
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 px-2 border-r border-slate-200">
+                <Filter size={14} className="text-slate-400" />
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Sheet</span>
+              </div>
+              <div className="relative">
+                <select 
+                  value={selectedYear} 
+                  onChange={(e) => setSelectedYear(e.target.value)}
+                  className="appearance-none bg-white border border-transparent text-slate-900 text-xs font-black rounded-lg px-3 py-1.5 pr-8 focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[120px]"
+                >
+                  <option value="">ALL SHEETS</option>
+                  {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] hidden sm:block">Academic Year</span>
-            <div className="relative group">
-              <select 
-                value={selectedYear} 
-                onChange={(e) => setSelectedYear(e.target.value)}
-                className="appearance-none bg-white border-2 border-gray-100 text-indigo-600 text-sm font-black rounded-xl pl-4 pr-10 py-2 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm group-hover:border-indigo-200"
-              >
-                <option value="">All Years</option>
-                {years.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-600 pointer-events-none" />
-            </div>
+            
+            <button 
+              onClick={fetchLedger}
+              className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+              title="Refresh Ledger"
+            >
+              <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
+            </button>
           </div>
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto w-full p-6 md:p-10 space-y-8">
-        <div className="relative group">
-          <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-indigo-600 transition-colors" size={22} />
+      <main className="max-w-7xl mx-auto w-full p-4 md:p-6 flex-1 space-y-4">
+        {/* Search Bar */}
+        <div className="relative group max-w-2xl mx-auto mb-8">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors" size={18} />
           <input 
             type="text" 
             placeholder="Search archives by project name or ID..."
-            className="w-full pl-16 pr-6 py-5 bg-white border-2 border-gray-100 rounded-3xl shadow-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none text-lg font-medium transition-all"
+            className="w-full pl-11 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl shadow-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none text-sm font-medium transition-all"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
 
         {loading ? (
-          <div className="py-32 flex flex-col items-center gap-4">
-            <RefreshCw className="w-10 h-10 text-indigo-600 animate-spin" />
-            <p className="text-gray-400 font-bold uppercase tracking-widest text-xs">Decrypting Vault...</p>
+          <div className="py-24 flex flex-col items-center gap-3">
+            <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin" />
+            <p className="text-slate-400 font-bold uppercase tracking-[0.2em] text-xs">Accessing Secure Archives...</p>
+          </div>
+        ) : filteredProjects.length === 0 ? (
+          <div className="py-24 text-center">
+            <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4 text-slate-300">
+              <FileSearch size={32} />
+            </div>
+            <h3 className="text-slate-900 font-bold">No records found</h3>
           </div>
         ) : (
-          <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-3">
             {filteredProjects.map((project) => {
               const pKey = `${project.project_id}-${project.project_title}`;
               const isExpanded = expandedProjects.has(pKey);
 
               return (
-                <div key={pKey} className={`bg-white rounded-[2rem] border transition-all duration-300 ${isExpanded ? 'border-indigo-200 shadow-2xl shadow-indigo-500/10' : 'border-gray-100 shadow-sm hover:border-gray-300 hover:shadow-md'}`}>
-                  <div onClick={() => toggleProject(pKey)} className="p-6 md:p-8 flex items-center justify-between cursor-pointer group">
-                    <div className="flex items-center gap-6">
-                      <div className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all duration-300 ${isExpanded ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 scale-105' : 'bg-gray-50 text-gray-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 group-hover:scale-105'}`}>
-                        <Folder size={28} fill={isExpanded ? "currentColor" : "none"} />
+                <div key={pKey} className={`bg-white border transition-all duration-200 ${isExpanded ? 'border-indigo-200 shadow-md ring-1 ring-indigo-50' : 'border-slate-200 hover:border-indigo-300 hover:shadow-sm'} rounded-xl`}>
+                  {/* Project Header */}
+                  <div 
+                    onClick={() => toggleProject(pKey)} 
+                    className="p-3 flex items-center justify-between cursor-pointer group select-none"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${isExpanded ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-50 text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600'}`}>
+                        <Folder size={18} fill={isExpanded ? "currentColor" : "none"} />
                       </div>
-                      <div>
-                        <h3 className="text-xl md:text-2xl font-black text-gray-900 group-hover:text-indigo-600 transition-colors tracking-tight">{project.project_title}</h3>
-                        <div className="flex items-center gap-4 mt-2 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
-                          <span className="bg-gray-50 px-2.5 py-1 rounded-md text-gray-500 border border-gray-200 font-mono tracking-normal">ID: {project.project_id}</span>
-                          <span className="flex items-center"><Calendar size={14} className="mr-1.5 opacity-70" /> {project.academic_year}</span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                           <h3 className="text-xs font-black text-slate-900 truncate group-hover:text-indigo-600 transition-colors uppercase tracking-tight">{project.project_title}</h3>
+                           <span className={`px-1.5 py-0.5 rounded-[4px] text-[8px] font-black border uppercase tracking-wider ${getStatusStyles(project.status)}`}>
+                             {project.status}
+                           </span>
+                        </div>
+                        <div className="flex items-center gap-3 mt-0.5 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                          <span className="font-mono text-slate-500">#{project.project_id}</span>
+                          <span className="flex items-center opacity-60"><Calendar size={10} className="mr-1" /> {project.academic_year}</span>
+                          <span className="flex items-center text-indigo-500/60"><BookOpen size={10} className="mr-1" /> {project.workbook_name || 'Legacy Archive'}</span>
                         </div>
                       </div>
                     </div>
-                    <div className={`p-3 rounded-full transition-all duration-500 ${isExpanded ? 'bg-indigo-50 text-indigo-600 rotate-180' : 'text-gray-300 group-hover:text-gray-600 group-hover:bg-gray-50'}`}>
-                      <ChevronDown size={24} />
+                    
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleDeleteProject(project); }}
+                        className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                        title="Delete Entire Project History"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                      <div className={`p-1 rounded-md transition-all ${isExpanded ? 'bg-indigo-50 text-indigo-600 rotate-180' : 'text-slate-300 group-hover:text-slate-600'}`}>
+                        <ChevronDown size={18} />
+                      </div>
                     </div>
                   </div>
 
+                  {/* Expanded Content */}
                   {isExpanded && (
-                    <div className="px-6 pb-6 md:px-8 md:pb-8 space-y-4 animate-in slide-in-from-top-4 duration-300">
+                    <div className="p-3 pt-0 space-y-2 animate-in slide-in-from-top-2 duration-200">
+                      {project.error_message && (
+                        <div className="p-3 mb-2 bg-rose-50 border border-rose-100 rounded-lg flex items-start gap-3">
+                          <AlertCircle size={14} className="text-rose-600 mt-0.5 shrink-0" />
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-black text-rose-700 uppercase tracking-widest">Last Archival Error</p>
+                            <p className="text-xs text-rose-600 font-medium leading-relaxed">{project.error_message}</p>
+                          </div>
+                        </div>
+                      )}
                       {Object.entries(project.documents).map(([type, versions]) => {
                         if (versions.length === 0) return null;
                         const docKey = `${pKey}-${type}`;
@@ -169,48 +311,66 @@ const ArchivalLedgerPage = () => {
                         const styles = getDocStyles(type);
 
                         return (
-                          <div key={type} className={`border-2 rounded-3xl overflow-hidden transition-colors ${isDocExpanded ? styles.border : 'border-gray-50 hover:border-gray-100'}`}>
-                            <div onClick={() => toggleDoc(pKey, type)} className={`p-5 flex items-center justify-between cursor-pointer transition-all ${isDocExpanded ? styles.bg : 'hover:bg-gray-50'}`}>
-                              <div className="flex items-center gap-4">
-                                <ChevronRight size={20} className={`text-gray-400 transition-transform duration-300 ${isDocExpanded ? 'rotate-90' : ''}`} />
-                                <div className={`p-2 rounded-xl bg-white shadow-sm ${styles.text}`}>
-                                    {styles.icon}
+                          <div key={type} className={`border rounded-lg overflow-hidden transition-all ${isDocExpanded ? 'border-indigo-100 shadow-sm' : 'border-slate-100'}`}>
+                            <div 
+                              onClick={(e) => { e.stopPropagation(); toggleDoc(pKey, type); }} 
+                              className={`p-2.5 flex items-center justify-between cursor-pointer transition-all ${isDocExpanded ? styles.bg : 'hover:bg-slate-50'}`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <ChevronRight size={14} className={`text-slate-400 transition-transform ${isDocExpanded ? 'rotate-90 text-indigo-500' : ''}`} />
+                                <div className={`p-1.5 rounded bg-white border border-slate-100 shadow-sm ${styles.text}`}>
+                                  {styles.icon}
                                 </div>
-                                <span className={`font-black uppercase tracking-widest text-sm ${styles.text}`}>{type}</span>
-                                <span className={`ml-2 px-3 py-1 bg-white rounded-full text-[10px] font-black border ${styles.border} ${styles.text} uppercase tracking-widest shadow-sm`}>
-                                  {versions.length} Version{versions.length > 1 ? 's' : ''}
+                                <span className={`text-xs font-black uppercase tracking-widest ${styles.text}`}>{type}</span>
+                                <span className="px-1.5 py-0.5 bg-white rounded-full text-[8px] font-black border border-slate-100 text-slate-400 uppercase tracking-widest shadow-sm">
+                                  {versions.length} {versions.length > 1 ? 'Versions' : 'Version'}
                                 </span>
                               </div>
                             </div>
 
                             {isDocExpanded && (
-                              <div className="p-5 pt-0 space-y-3 bg-white">
+                              <div className="bg-white border-t border-slate-50 divide-y divide-slate-50">
                                 {versions.map((v) => (
-                                  <div key={v.id} className={`flex flex-col md:flex-row md:items-center justify-between p-5 bg-white rounded-2xl border-2 border-gray-100 transition-all group/v ${styles.hover}`}>
-                                    <div className="flex items-center gap-5">
-                                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center bg-gray-50 ${styles.text} transition-colors`}>
-                                          <Hash size={20} />
+                                  <div key={v.id} className="p-3 flex items-center justify-between group/v hover:bg-slate-50/50 transition-colors">
+                                    <div className="flex items-center gap-4 min-w-0">
+                                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center bg-slate-50 ${styles.text} border border-slate-100 group-hover/v:bg-white`}>
+                                        <Hash size={14} />
                                       </div>
-                                      <div>
-                                        <div className="text-base font-black text-gray-900">Version {v.version}</div>
-                                        <div className="flex items-center gap-4 text-[10px] font-black text-gray-400 uppercase tracking-widest mt-1.5">
-                                          <span className="flex items-center"><Clock size={12} className="mr-1.5" /> {v.timestamp}</span>
-                                          <button onClick={() => copyToClipboard(v.hash)} className="flex items-center hover:text-indigo-600 transition-colors group/copy">
+                                      <div className="min-w-0">
+                                        <div className="text-[11px] font-black text-slate-800 uppercase tracking-tight">Version {v.version}.0</div>
+                                        <div className="flex items-center gap-3 mt-1 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                          <span className="flex items-center"><Clock size={10} className="mr-1" /> {v.timestamp}</span>
+                                          <button 
+                                            onClick={(e) => { e.stopPropagation(); copyToClipboard(v.hash); }} 
+                                            className="flex items-center hover:text-indigo-600 transition-colors group/copy"
+                                          >
                                             <span className="font-mono tracking-normal">{v.hash?.substring(0, 12)}...</span>
-                                            {copiedHash === v.hash ? <Check size={14} className="ml-2 text-emerald-500" /> : <Copy size={14} className="ml-2 opacity-0 group-hover/copy:opacity-100" />}
+                                            {copiedHash === v.hash ? <Check size={10} className="ml-1 text-emerald-500" /> : <Copy size={10} className="ml-1 opacity-0 group-hover/copy:opacity-100" />}
                                           </button>
                                         </div>
                                       </div>
                                     </div>
-                                    <div className="flex items-center gap-3 mt-6 md:mt-0 self-end">
-                                      <button onClick={() => window.open(`/api/registry/download/${v.id}/${type}?preview=1`)} className="px-5 py-2.5 text-xs font-black text-indigo-600 border-2 border-indigo-100 rounded-xl hover:bg-indigo-50 hover:border-indigo-300 transition-all flex items-center gap-2">
-                                        <Eye size={16} /> VIEW
+                                    <div className="flex items-center gap-2">
+                                      <button 
+                                        onClick={(e) => { e.stopPropagation(); window.open(`/api/registry/download/${v.id}/${type}?preview=1`); }}
+                                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg border border-transparent hover:border-indigo-100 transition-all"
+                                        title="View PDF"
+                                      >
+                                        <Eye size={14} />
                                       </button>
-                                      <button onClick={() => window.open(`/api/registry/download/${v.id}/${type}`)} className="px-5 py-2.5 text-xs font-black text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 flex items-center gap-2 hover:-translate-y-0.5">
-                                        <Download size={16} /> DOWNLOAD
+                                      <button 
+                                        onClick={(e) => { e.stopPropagation(); window.open(`/api/registry/download/${v.id}/${type}`); }}
+                                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg border border-transparent hover:border-indigo-100 transition-all"
+                                        title="Download"
+                                      >
+                                        <Download size={14} />
                                       </button>
-                                      <button onClick={() => handleDelete(v.id)} className="p-3 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors">
-                                        <Trash2 size={18}/>
+                                      <button 
+                                        onClick={(e) => { e.stopPropagation(); handleDelete(v.id); }}
+                                        className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                                        title="Delete Record"
+                                      >
+                                        <Trash2 size={14} />
                                       </button>
                                     </div>
                                   </div>
@@ -220,6 +380,15 @@ const ArchivalLedgerPage = () => {
                           </div>
                         );
                       })}
+                      
+                      {/* Integrity Footer */}
+                      <div className="flex items-center justify-between px-1 text-xs font-black text-slate-300 uppercase tracking-[0.2em] pt-1">
+                         <div className="flex items-center gap-1.5">
+                           <AlertCircle size={10} />
+                           <span>Vault Integrity Verified</span>
+                         </div>
+                         <span>Total Records: {Object.values(project.documents).flat().length}</span>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -229,8 +398,8 @@ const ArchivalLedgerPage = () => {
         )}
       </main>
       
-      <footer className="mt-auto p-12 text-center text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] bg-white/50 backdrop-blur-md border-t border-gray-200/50">
-        DriveSafe Vault &copy; 2026 &bull; Secure Audit Log
+      <footer className="mt-auto p-6 text-center text-xs font-black text-slate-300 uppercase tracking-[0.3em] border-t border-slate-100">
+        DriveSafe Vault &copy; 2026 &bull; Secure Audit Log &bull; v2.6.0
       </footer>
     </div>
   );

@@ -3,14 +3,14 @@ import Logo from "../components/Logo";
 
 const AboutPage = () => {
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
-      <nav className="bg-white border-b border-gray-100 sticky top-0 z-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col font-sans transition-colors duration-300">
+      <nav className="bg-white border-b border-gray-100 sticky top-0 z-50 transition-all">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.location.hash = ""}>
             <Logo size={40} />
-            <span className="text-xl font-bold text-gray-900 tracking-tight">DriveSafe</span>
+            <span className="text-xl font-bold text-gray-900 tracking-tight uppercase">DriveSafe</span>
           </div>
-          <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-600">
+          <div className="hidden md:flex items-center gap-6 text-sm font-medium text-gray-600 uppercase tracking-widest">
             <a href="#" className="hover:text-indigo-600 transition-colors">Home</a>
             <a href="#features" className="hover:text-indigo-600 transition-colors">Features</a>
             <a href="#about" className="hover:text-indigo-600 transition-colors">About</a>
@@ -29,7 +29,7 @@ const AboutPage = () => {
             <div className="inline-flex items-center gap-2 bg-indigo-50 px-4 py-1.5 rounded-full text-indigo-700 text-xs font-black uppercase tracking-widest">
                 Academic Project
             </div>
-            <h1 className="text-4xl md:text-5xl font-black text-gray-900 tracking-tight">Excellence in Software Development</h1>
+            <h1 className="text-4xl md:text-5xl font-black text-gray-900 tracking-tight uppercase">Excellence in Software Development</h1>
             <p className="text-xl text-gray-500 font-medium max-w-2xl mx-auto">
                 DriveSafe is a capstone initiative by IT students of Cebu Institute of Technology University.
             </p>
@@ -40,7 +40,7 @@ const AboutPage = () => {
                 <div className="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-100">
                     <Target className="w-7 h-7" />
                 </div>
-                <h2 className="text-2xl font-black text-gray-900 tracking-tight">Project Objectives</h2>
+                <h2 className="text-2xl font-black text-gray-900 tracking-tight uppercase">Project Objectives</h2>
                 <p className="text-gray-500 font-medium leading-relaxed">
                     Addressing the critical need for automated backup solutions for educators who risk losing important academic files.
                 </p>
@@ -53,7 +53,7 @@ const AboutPage = () => {
                         <div key={i} className="flex gap-4 p-4 bg-gray-50 rounded-2xl border border-gray-100">
                             <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
                             <div>
-                                <h4 className="font-bold text-gray-900 text-sm">{obj.t}</h4>
+                                <h4 className="font-bold text-gray-900 text-sm uppercase tracking-tight">{obj.t}</h4>
                                 <p className="text-xs text-gray-500 font-medium">{obj.d}</p>
                             </div>
                         </div>
@@ -65,7 +65,7 @@ const AboutPage = () => {
                 <div className="w-14 h-14 bg-amber-500 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-amber-100">
                     <ShieldCheck className="w-7 h-7" />
                 </div>
-                <h2 className="text-2xl font-black text-gray-900 tracking-tight">Problem Statement</h2>
+                <h2 className="text-2xl font-black text-gray-900 tracking-tight uppercase">Problem Statement</h2>
                 <p className="text-gray-500 font-medium leading-relaxed">
                     Account deactivation upon graduation leads to significant loss of academic assets accumulated over years.
                 </p>
@@ -84,12 +84,12 @@ const AboutPage = () => {
             </div>
         </div>
 
-        <div className="bg-white p-10 rounded-[3rem] border border-gray-100 shadow-sm space-y-10">
+        <div className="bg-white p-10 rounded-[3rem] border border-gray-100 shadow-sm space-y-10 transition-all">
             <div className="text-center space-y-2">
-                <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-inner">
                     <Users className="w-7 h-7" />
                 </div>
-                <h2 className="text-3xl font-black text-gray-900 tracking-tight">Development Team</h2>
+                <h2 className="text-3xl font-black text-gray-900 tracking-tight uppercase">Development Team</h2>
                 <p className="text-gray-500 font-bold text-xs uppercase tracking-widest">Information Technology • Class of 2025</p>
             </div>
             
@@ -98,11 +98,11 @@ const AboutPage = () => {
                     "Lyrech James E. Laspiñas", "Louis Drey F. Castañeto", "John Earl F. Mandawe",
                     "Clyde Nixon Jumawan", "Mark Joenylle B. Cortes"
                 ].map((name, i) => (
-                    <div key={i} className="p-6 bg-gray-50 rounded-2xl text-center border border-gray-100 hover:border-indigo-100 transition-all group">
+                    <div key={i} className="p-6 bg-gray-50 rounded-2xl text-center border border-gray-100 hover:border-indigo-100 transition-all group shadow-sm">
                         <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mx-auto mb-4 text-indigo-600 font-black border border-gray-100 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-sm">
                             {name.charAt(0)}
                         </div>
-                        <h4 className="text-xs font-black text-gray-900 leading-tight mb-1">{name}</h4>
+                        <h4 className="text-xs font-black text-gray-900 leading-tight mb-1 uppercase tracking-tight">{name}</h4>
                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">Developer</p>
                     </div>
                 ))}
@@ -128,14 +128,14 @@ const AboutPage = () => {
                 ].map((item, i) => (
                     <div key={i} className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/10">
                         <h4 className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-1">{item.l}</h4>
-                        <p className="text-xl font-black">{item.v}</p>
+                        <p className="text-xl font-black uppercase tracking-tight">{item.v}</p>
                     </div>
                 ))}
             </div>
         </div>
       </main>
 
-      <footer className="p-10 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest border-t border-gray-100 bg-white">
+      <footer className="p-10 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest border-t border-gray-100 bg-white transition-colors">
         &copy; 2026 DriveSafe &bull; Developed with Passion at CIT-U
       </footer>
     </div>

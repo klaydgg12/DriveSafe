@@ -154,13 +154,21 @@ def logout():
     logout_user()
     return jsonify({"message": "Logged out"}), 200
 
-import traceback
+from werkzeug.exceptions import HTTPException
 
 @app.errorhandler(Exception)
 def handle_exception(e):
+    # Pass through HTTP errors (404, 405, etc.)
+    if isinstance(e, HTTPException):
+        return jsonify({"error": e.description}), e.code
+    
+    # Otherwise, it's a real server error (500)
     print("--- INTERNAL SERVER ERROR ---")
     traceback.print_exc()
-    return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+    return jsonify({
+        "error": str(e), 
+        "traceback": traceback.format_exc()
+    }), 500
 
 if __name__ == '__main__':
     with app.app_context():

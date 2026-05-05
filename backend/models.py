@@ -19,6 +19,7 @@ class ArchivalLedger(db.Model):
     project_id = db.Column(db.String(50), nullable=True)
     project_title = db.Column(db.String(255), nullable=False)
     academic_year = db.Column(db.String(50), nullable=False)
+    workbook_name = db.Column(db.String(255), nullable=True, default='Archives')
     srs_original_url = db.Column(db.String(500), nullable=True)
     sdd_original_url = db.Column(db.String(500), nullable=True)
     spmp_original_url = db.Column(db.String(500), nullable=True)

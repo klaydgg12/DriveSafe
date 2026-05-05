@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { 
-  Database, Shield, Zap, Clock, CheckCircle2, 
+import {
+  Database, Shield, Zap, Clock, CheckCircle2,
   ChevronRight, X, LayoutDashboard
 } from "lucide-react";
 import Logo from "../components/Logo";
@@ -74,14 +74,14 @@ const FeaturesPage = () => {
   }, [selectedFeature]);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
-      <nav className="bg-white border-b border-gray-100 sticky top-0 z-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col font-sans transition-colors duration-300">
+      <nav className="bg-white border-b border-gray-100 sticky top-0 z-50 transition-all">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Logo size={40} />
-            <span className="text-xl font-bold text-gray-900 tracking-tight ml-1">DriveSafe</span>
+            <span className="text-xl font-bold text-gray-900 tracking-tight ml-1 uppercase">DriveSafe</span>
           </div>
-          <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-600">
+          <div className="hidden md:flex items-center gap-6 text-sm font-medium text-gray-600 uppercase tracking-widest">
             <a href="#" className="hover:text-indigo-600 transition-colors">Home</a>
             <a href="#features" className="hover:text-indigo-600 transition-colors">Features</a>
             <a href="#about" className="hover:text-indigo-600 transition-colors">About</a>
@@ -97,7 +97,7 @@ const FeaturesPage = () => {
 
       <main className="flex-1 max-w-7xl mx-auto w-full p-6 md:p-10 space-y-16">
         <div className="text-center space-y-4 pt-10">
-            <h1 className="text-4xl md:text-5xl font-black text-gray-900 tracking-tight">Powerful Features</h1>
+            <h1 className="text-4xl md:text-5xl font-black text-gray-900 tracking-tight uppercase">Powerful Features</h1>
             <p className="text-xl text-gray-500 font-medium">Everything you need for institutional archival integrity</p>
         </div>
 
@@ -108,10 +108,10 @@ const FeaturesPage = () => {
                     onClick={() => setSelectedFeature(f)}
                     className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm hover:shadow-xl hover:border-indigo-100 transition-all cursor-pointer group"
                 >
-                    <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 mb-6 group-hover:bg-indigo-600 group-hover:text-white transition-all">
+                    <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 mb-6 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-inner">
                         {f.icon}
                     </div>
-                    <h3 className="text-xl font-bold text-gray-900 mb-3">{f.title}</h3>
+                    <h3 className="text-xl font-bold text-gray-900 mb-3 uppercase tracking-tight">{f.title}</h3>
                     <p className="text-gray-500 text-sm leading-relaxed mb-6">{f.description}</p>
                     <ul className="space-y-2 mb-6">
                         {f.list.map((item, i) => (
@@ -130,7 +130,7 @@ const FeaturesPage = () => {
 
       {selectedFeature && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-300" onClick={() => setSelectedFeature(null)}>
-              <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300" onClick={e => e.stopPropagation()}>
+              <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300 transition-all" onClick={e => e.stopPropagation()}>
                   <div className="p-8 md:p-12 space-y-8">
                       <div className="flex items-start justify-between">
                           <div className="flex items-center gap-4">
@@ -138,7 +138,7 @@ const FeaturesPage = () => {
                                   {selectedFeature.icon}
                               </div>
                               <div>
-                                  <h2 className="text-2xl font-black text-gray-900 tracking-tight">{selectedFeature.title}</h2>
+                                  <h2 className="text-2xl font-black text-gray-900 tracking-tight uppercase">{selectedFeature.title}</h2>
                                   <p className="text-indigo-600 font-bold text-xs uppercase tracking-widest">Technical Deep Dive</p>
                               </div>
                           </div>
@@ -171,7 +171,7 @@ const FeaturesPage = () => {
           </div>
       )}
 
-      <footer className="p-10 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest border-t border-gray-100 bg-white">
+      <footer className="p-10 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest border-t border-gray-100 bg-white transition-colors">
         &copy; 2026 DriveSafe Features &bull; Optimized for Excellence
       </footer>
     </div>

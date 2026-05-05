@@ -31,36 +31,36 @@ const LoginPage = () => {
   });
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6 font-sans">
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6 font-sans transition-colors duration-300">
       {/* Branding top-left */}
-      <div className="fixed top-0 left-0 p-6">
-        <div className="flex items-center gap-2">
-          <Logo size={36} />
-          <span className="text-xl font-bold text-gray-900 tracking-tight">DriveSafe</span>
+      <div className="fixed top-0 left-0 p-6 flex items-center justify-between w-full">
+        <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.location.hash = ""}>
+          <Logo size={50} />
+          <span className="text-xl font-bold text-gray-900 tracking-tight uppercase">DriveSafe</span>
         </div>
       </div>
 
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden relative">
+      <div className="w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl border border-gray-100 overflow-hidden relative transition-all">
         <button 
           onClick={() => window.location.hash = ""}
-          className="absolute top-6 right-6 p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-all"
+          className="absolute top-8 right-8 p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-all"
         >
-          <X className="w-5 h-5" />
+          <X className="w-6 h-6" />
         </button>
 
-        <div className="p-10 text-center space-y-8">
-          <div className="inline-flex items-center justify-center w-28 h-28 bg-indigo-50 rounded-3xl">
-            <Logo size={80} />
+        <div className="p-10 md:p-12 text-center space-y-10">
+          <div className="inline-flex items-center justify-center w-28 h-28 bg-indigo-50 rounded-[2rem] shadow-inner">
+            <Logo size={90} />
           </div>
           
-          <div className="space-y-2">
-            <h1 className="text-3xl font-black text-gray-900">Welcome Back</h1>
+          <div className="space-y-3">
+            <h1 className="text-3xl font-black text-gray-900 tracking-tight uppercase">Welcome Back</h1>
             <p className="text-gray-500 font-medium">Sign in to access your secure archives</p>
           </div>
 
           <button 
             onClick={() => googleLogin()}
-            className="w-full flex items-center justify-center gap-3 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-lg transition-all shadow-lg shadow-indigo-100 group"
+            className="w-full flex items-center justify-center gap-4 py-5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-[1.5rem] font-black text-sm uppercase tracking-widest transition-all shadow-xl shadow-indigo-100 hover:shadow-2xl active:scale-[0.98] group"
           >
             <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -71,17 +71,17 @@ const LoginPage = () => {
             Sign in with Google
           </button>
 
-          <div className="pt-4 flex items-start gap-3 text-left bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
-            <ShieldCheck className="w-5 h-5 text-emerald-600 mt-0.5 shrink-0" />
-            <p className="text-xs text-emerald-800 font-medium leading-relaxed">
+          <div className="pt-4 flex items-start gap-4 text-left bg-emerald-50 p-5 rounded-2xl border border-emerald-100">
+            <ShieldCheck className="w-6 h-6 text-emerald-600 mt-0.5 shrink-0" />
+            <p className="text-xs text-emerald-800 font-medium leading-relaxed uppercase tracking-tight">
               We're compliant with RA 10173 Data Privacy Act. Your data is encrypted and secure.
             </p>
           </div>
         </div>
         
         <div className="bg-gray-50 p-6 text-center border-t border-gray-100">
-          <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">
-            Institutional Access Only
+          <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
+            Institutional Access Only &bull; Secure Protocol
           </p>
         </div>
       </div>

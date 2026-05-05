@@ -75,7 +75,7 @@ class ArchivalEngine:
         if exact_match:
             return "Exact Duplicate", 1.0, exact_match.project_title, exact_match.project_id, exact_match.version
 
-        # 2. AI Semantic Similarity
+        # 2. AI Semantic Similarity (BATCH OPTIMIZED)
         if not new_text or len(new_text) < 100: 
             return None, 0, None, None, None
 
@@ -85,20 +85,48 @@ class ArchivalEngine:
         else:
             past_records = query.all()
 
+        if not past_records:
+            return None, 0, None, None, None
+
+        # Build the corpus
+        corpus = [new_text]
+        metadata_map = [] # To keep track of which index corresponds to which record/doc_type
+        
         for record in past_records:
-            # Check all document types for similarity
             for dt in ['srs', 'sdd', 'spmp', 'std', 'ri']:
                 past_text = getattr(record, f"{dt}_text")
                 if past_text and len(past_text) > 100:
-                    try:
-                        vectorizer = TfidfVectorizer().fit_transform([new_text, past_text])
-                        vectors = vectorizer.toarray()
-                        similarity = cosine_similarity(vectors)[0][1]
-                        logger.info(f"AI Similarity Check: {similarity:.4f} against {record.project_title} ({dt.upper()})")
-                        # 90% threshold for "Near Duplicate"
-                        if similarity > 0.90:
-                            return "Semantic Duplicate", similarity, record.project_title, record.project_id, record.version
-                    except: continue
+                    corpus.append(past_text)
+                    metadata_map.append({
+                        'title': record.project_title,
+                        'id': record.project_id,
+                        'version': record.version,
+                        'dt': dt
+                    })
+
+        if len(corpus) <= 1:
+            return None, 0, None, None, None
+
+        try:
+            # Vectorize the entire corpus at once (extremely fast compared to looping pairs)
+            vectorizer = TfidfVectorizer()
+            tfidf_matrix = vectorizer.fit_transform(corpus)
+            
+            # Compare the first document (new_text) against all others
+            cosine_similarities = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:]).flatten()
+            
+            # Find the most similar document
+            max_sim_idx = cosine_similarities.argmax()
+            max_sim_score = cosine_similarities[max_sim_idx]
+            
+            if max_sim_score > 0.90:
+                match_meta = metadata_map[max_sim_idx]
+                logger.info(f"AI Batch Similarity Match: {max_sim_score:.4f} against {match_meta['title']} ({match_meta['dt'].upper()})")
+                return "Semantic Duplicate", max_sim_score, match_meta['title'], match_meta['id'], match_meta['version']
+                
+        except Exception as e:
+            logger.error(f"AI Batch Processing Failed: {e}")
+            
         return None, 0, None, None, None
 
     def download_file(self, file_id, destination_path):
@@ -230,35 +258,28 @@ class ArchivalEngine:
             
             if file_id:
                 try:
-                    # --- METADATA OPTIMIZATION ---
+                    # --- TURBO METADATA OPTIMIZATION ---
                     metadata = self._get_file_metadata(file_id)
                     if not metadata:
                         raise Exception("Could not reach Google Drive for metadata.")
 
                     changed = True
-                    # If we have a previous record, check if the file was modified since then
                     if last_record and last_record.archived_at:
-                        # Parse Google's RFC3339 timestamp (e.g., 2023-10-12T10:00:00.000Z)
                         raw_mod_time = metadata.get('modifiedTime')
-                        # Simple slice to handle Z and milliseconds for datetime.fromisoformat
-                        mod_time_str = raw_mod_time.replace('Z', '+00:00')
-                        mod_time = datetime.datetime.fromisoformat(mod_time_str)
+                        mod_time = datetime.datetime.fromisoformat(raw_mod_time.replace('Z', '+00:00'))
                         
-                        # Compare modified time (UTC) with our archived_at time (UTC)
-                        # We add a small 2-second buffer to account for archival processing time
-                        if mod_time <= last_record.archived_at.replace(tzinfo=datetime.timezone.utc):
-                            logger.info(f"Metadata Match: {doc_type.upper()} hasn't changed since {last_record.archived_at}. Skipping.")
+                        last_archive_time = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
+                        if mod_time <= last_archive_time + datetime.timedelta(seconds=5):
+                            logger.info(f"Turbo Skip: {doc_type.upper()} is up-to-date in vault.")
                             changed = False
 
                     if not changed:
-                        # Re-use previous data but set BIN and TEXT to None for the new DB row (DEDUPLICATION)
                         results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                         results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
-                        results[doc_type]['text'] = None
+                        results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
                         results[doc_type]['bin'] = None
                         continue
-
-                    # --- END METADATA OPTIMIZATION ---
+                    # --- END TURBO OPTIMIZATION ---
 
                     # Proceed with download if changed
                     doc_dir = os.path.join(base_project_dir, doc_type.upper())
@@ -283,67 +304,60 @@ class ArchivalEngine:
                     if last_record:
                         last_hash = getattr(last_record, f"{doc_type}_hash")
                         if last_hash == file_hash:
-                            logger.info(f"Hash Match: {doc_type.upper()} is identical to last version. Skipping.")
+                            logger.info(f"Hash Match: {doc_type.upper()} is identical. No new version.")
                             changed = False
                         else:
-                            # If hash differs, check AI similarity to see if it's just metadata/conversion change
-                            last_path = getattr(last_record, f"{doc_type}_local_path")
-                            if last_path:
-                                full_last_path = os.path.join(self.archive_root, last_path)
-                                if os.path.exists(full_last_path):
-                                    past_text = self._extract_text_from_pdf(full_last_path)
-                                    if file_text and past_text:
-                                        try:
-                                            vectorizer = TfidfVectorizer().fit_transform([file_text, past_text])
-                                            vectors = vectorizer.toarray()
-                                            similarity = cosine_similarity(vectors)[0][1]
-                                            logger.info(f"AI Similarity for {doc_type.upper()}: {similarity:.4f}")
-                                            # If 99.9% similar, it's just metadata/conversion changes, not an edit.
-                                            if similarity > 0.99:
-                                                logger.info(f"AI: {doc_type.upper()} is 99%+ identical. Ignoring hash change.")
-                                                changed = False
-                                        except: pass
+                            # If hash differs, check AI similarity to see if it's just metadata change
+                            last_text = getattr(last_record, f"{doc_type}_text")
+                            if file_text and last_text:
+                                try:
+                                    vectorizer = TfidfVectorizer().fit_transform([file_text, last_text])
+                                    vectors = vectorizer.toarray()
+                                    similarity = cosine_similarity(vectors)[0][1]
+                                    logger.info(f"AI Similarity for {doc_type.upper()}: {similarity:.4f}")
+                                    if similarity > 0.99:
+                                        logger.info(f"AI: {doc_type.upper()} is 99%+ identical. Re-using last version.")
+                                        changed = False
+                                except: pass
 
-                    # 4. Independent Plagiarism/Duplication Check (Across other projects)
+                    # 4. Plagiarism Check (Against other projects)
                     dup_type, score, orig_title, orig_project_id, _ = self.check_for_duplicates(file_hash, file_text, current_project_id=project_id)
                     if dup_type and orig_project_id != project_id:
-                        logger.warning(f"PLAGIARISM DETECTED: {doc_type.upper()} is a {dup_type} of project '{orig_title}'")
+                        logger.warning(f"PLAGIARISM: {doc_type.upper()} matches '{orig_title}'")
                         results[doc_type]['dup'] = f"Warning: Similar to {orig_title}"
                     
                     if changed:
                         total_changed += 1
                         results[doc_type]['is_changed'] = True
                         
-                        # Use new version number for filename
-                        new_version = (last_record.version if last_record else 0) + 1
+                        # Calculate per-document version correctly
+                        # We count how many non-null hashes exist for this specific doc type
+                        from sqlalchemy import func
+                        prev_doc_versions = db.session.query(func.count(ArchivalLedger.id)).filter(
+                            ArchivalLedger.project_id == project_id,
+                            getattr(ArchivalLedger, f"{doc_type}_hash").isnot(None)
+                        ).scalar()
+                        
+                        doc_v = (prev_doc_versions or 0) + 1
                         ext = os.path.splitext(actual_temp_path)[1]
-                        final_name = f"{clean_title}_{doc_type.upper()}_v{new_version}{ext}"
+                        final_name = f"{clean_title}_{doc_type.upper()}_v{doc_v}{ext}"
                         final_path = os.path.join(doc_dir, final_name)
                         
-                        # Safety check for file collision
-                        v_safe = new_version
+                        # Collision safety
+                        v_safe = doc_v
                         while os.path.exists(final_path):
                             v_safe += 1
                             final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{v_safe}{ext}")
 
                         os.rename(actual_temp_path, final_path)
                         results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
-
-                        # BINARY STORAGE OPTIMIZATION: 
-                        # Only store in DB if file is < 16MB to avoid MySQL "Server Gone Away" errors.
-                        if len(file_binary) > 16 * 1024 * 1024:
-                            logger.warning(f"File {doc_type.upper()} is too large ({len(file_binary)} bytes) for DB. Saving path only.")
-                            results[doc_type]['bin'] = None
-                        else:
-                            results[doc_type]['bin'] = file_binary
+                        results[doc_type]['bin'] = file_binary if len(file_binary) < 16*1024*1024 else None
                     else:
-                        # DEDUPLICATION OPTIMIZATION:
-                        # If file is identical, set bin and text to None in the new row.
-                        # This saves space while the download route handles looking back to previous versions.
                         results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                        results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
+                        results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
                         results[doc_type]['bin'] = None
-                        results[doc_type]['text'] = None
-                        os.remove(actual_temp_path) # Delete temp as we don't need a new file
+                        if os.path.exists(actual_temp_path): os.remove(actual_temp_path)
                         
                 except Exception as e:
                     error_msg += f"{doc_type.upper()} Error: {str(e)}; "
@@ -365,6 +379,7 @@ class ArchivalEngine:
                 project_id=project_id,
                 project_title=project_data.get('project_title'),
                 academic_year=academic_year,
+                workbook_name=workbook_name,
                 srs_original_url=project_data.get('srs_link'),
                 sdd_original_url=project_data.get('sdd_link'),
                 spmp_original_url=project_data.get('spmp_link'),

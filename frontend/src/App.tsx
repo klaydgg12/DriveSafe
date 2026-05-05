@@ -7,6 +7,7 @@ import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import ArchivalLedgerPage from "./pages/ArchivalLedgerPage";
 import RegistryDashboard from "./pages/RegistryDashboard";
+import { ThemeProvider } from "./context/ThemeContext";
 import "./App.css";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "314972685252-t6v2r7ok3d41n91jp9vpboo83bg9cgk1.apps.googleusercontent.com";
@@ -63,11 +64,12 @@ function App() {
 
   return (
     <GoogleOAuthProvider clientId={CLIENT_ID}>
-      <div style={{ width: "100vw", height: "100vh", overflow: "auto" }}>
-        {renderPage()}
-      </div>
+      <ThemeProvider>
+        <div className="bg-slate-50 transition-colors duration-300" style={{ width: "100%", height: "100vh", overflow: "auto" }}>
+          {renderPage()}
+        </div>
+      </ThemeProvider>
     </GoogleOAuthProvider>
-  );
-}
+  );}
 
 export default App;

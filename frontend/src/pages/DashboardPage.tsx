@@ -51,7 +51,7 @@ const DashboardPage: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans relative overflow-hidden">
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans relative overflow-hidden transition-colors duration-300">
       {/* Background Gradients */}
       <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/5 rounded-full blur-[120px] pointer-events-none"></div>
 
@@ -59,13 +59,13 @@ const DashboardPage: React.FC = () => {
       <nav className="bg-white/70 backdrop-blur-xl border-b border-gray-200/50 sticky top-0 z-50 transition-all">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Logo size={70} />
-            <span className="text-xl font-black text-gray-900 tracking-tight ml-1">DriveSafe</span>
+            <Logo size={50} />
+            <span className="text-xl font-black text-gray-900 tracking-tight ml-1 uppercase">DriveSafe</span>
           </div>
           <div className="flex items-center gap-6">
             <div className="text-right hidden sm:block">
               <p className="text-sm font-bold text-gray-900 leading-none">{user?.name}</p>
-              <p className="text-[9px] font-black text-indigo-600 mt-1.5 uppercase tracking-[0.2em]">{user?.role} Access</p>
+              <p className="text-xs font-black text-indigo-600 mt-1.5 uppercase tracking-[0.2em]">{user?.role} Access</p>
             </div>
             <div className="w-px h-8 bg-gray-200 hidden sm:block"></div>
             <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all" title="Sign out">
@@ -79,17 +79,17 @@ const DashboardPage: React.FC = () => {
       <main className="max-w-7xl mx-auto w-full p-6 md:p-10 space-y-10 relative z-10">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div className="space-y-2">
-            <h2 className="text-4xl font-black text-gray-900 tracking-tighter">System Console</h2>
+            <h2 className="text-4xl font-black text-gray-900 tracking-tighter uppercase">System Console</h2>
             <p className="text-gray-500 font-medium text-lg">Archival integrity monitoring & management</p>
           </div>
           <div className="flex items-center gap-2 bg-white/80 backdrop-blur-sm p-1.5 rounded-2xl border border-gray-200/60 shadow-sm">
              <div className="px-4 py-2 bg-gray-50/80 rounded-xl flex items-center gap-2">
                 <Activity className="w-4 h-4 text-indigo-500" />
-                <span className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Sync: {stats?.last_sync.split(' ')[1]}</span>
+                <span className="text-xs font-black text-gray-500 uppercase tracking-[0.2em]">Sync: {stats?.last_sync.split(' ')[1]}</span>
              </div>
              <div className="px-5 py-2 bg-gradient-to-r from-emerald-400 to-emerald-500 rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-200/50">
                 <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse shadow-[0_0_8px_rgba(255,255,255,0.8)]"></span>
-                <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Live</span>
+                <span className="text-xs font-black text-white uppercase tracking-[0.2em]">Live</span>
              </div>
           </div>
         </div>
@@ -98,7 +98,7 @@ const DashboardPage: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white/80 backdrop-blur-md p-8 rounded-[2rem] border border-gray-200/60 shadow-sm flex items-center justify-between group hover:border-indigo-200 hover:shadow-xl transition-all duration-300">
             <div className="space-y-2">
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Pending Projects</p>
+              <p className="text-xs font-black text-gray-400 uppercase tracking-[0.2em]">Pending Projects</p>
               <p className="text-5xl font-black text-gray-900 tracking-tighter group-hover:text-indigo-600 transition-colors">{stats?.pending_count}</p>
             </div>
             <div className="w-16 h-16 bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl flex items-center justify-center text-indigo-600 shadow-inner group-hover:scale-110 transition-transform">
@@ -107,7 +107,7 @@ const DashboardPage: React.FC = () => {
           </div>
           <div className="bg-white/80 backdrop-blur-md p-8 rounded-[2rem] border border-gray-200/60 shadow-sm flex items-center justify-between group hover:border-emerald-200 hover:shadow-xl transition-all duration-300">
             <div className="space-y-2">
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Total Archived</p>
+              <p className="text-xs font-black text-gray-400 uppercase tracking-[0.2em]">Total Archived</p>
               <p className="text-5xl font-black text-gray-900 tracking-tighter group-hover:text-emerald-600 transition-colors">{stats?.archived_count}</p>
             </div>
             <div className="w-16 h-16 bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-2xl flex items-center justify-center text-emerald-600 shadow-inner group-hover:scale-110 transition-transform">
@@ -116,7 +116,7 @@ const DashboardPage: React.FC = () => {
           </div>
           <div className="bg-white/80 backdrop-blur-md p-8 rounded-[2rem] border border-gray-200/60 shadow-sm flex items-center justify-between group hover:border-indigo-200 hover:shadow-xl transition-all duration-300">
             <div className="space-y-2">
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Auth Protocol</p>
+              <p className="text-xs font-black text-gray-400 uppercase tracking-[0.2em]">Auth Protocol</p>
               <p className={`text-2xl font-black tracking-tighter ${stats?.service_account_configured ? 'text-indigo-600' : 'text-red-500'}`}>
                 {stats?.service_account_configured ? "SECURED" : "REQUIRED"}
               </p>
@@ -136,7 +136,7 @@ const DashboardPage: React.FC = () => {
             <div className="w-20 h-20 bg-gradient-to-br from-indigo-500 to-indigo-700 rounded-[1.5rem] flex items-center justify-center text-white mb-8 group-hover:scale-110 transition-transform duration-500 shadow-xl shadow-indigo-200/50">
               <LayoutDashboard className="w-10 h-10" />
             </div>
-            <h3 className="text-3xl font-black text-gray-900 mb-4 tracking-tighter">Capstone Archiver</h3>
+            <h3 className="text-xl font-black text-gray-900 mb-4 tracking-tighter uppercase">Capstone Archiver</h3>
             <p className="text-gray-500 font-medium mb-10 leading-relaxed text-lg max-w-md">
               Execute archival sequences, validate links, and synchronize local storage with Google Drive.
             </p>
@@ -155,7 +155,7 @@ const DashboardPage: React.FC = () => {
             <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-[1.5rem] flex items-center justify-center text-white mb-8 group-hover:scale-110 transition-transform duration-500 shadow-xl shadow-purple-200/50">
               <History className="w-10 h-10" />
             </div>
-            <h3 className="text-3xl font-black text-gray-900 mb-4 tracking-tighter">Audit Log</h3>
+            <h3 className="text-3xl font-black text-gray-900 mb-4 tracking-tighter uppercase">Audit Log</h3>
             <p className="text-gray-500 font-medium mb-10 leading-relaxed text-lg max-w-md">
               Access historical records, audit cryptographic signatures, and manage document versioning.
             </p>
@@ -169,7 +169,7 @@ const DashboardPage: React.FC = () => {
         </div>
       </main>
 
-      <footer className="mt-auto p-10 border-t border-gray-200/50 bg-white/50 backdrop-blur-md flex flex-col md:flex-row justify-between items-center gap-4 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] relative z-10">
+      <footer className="mt-auto p-10 border-t border-gray-200/50 bg-white/50 backdrop-blur-md flex flex-col md:flex-row justify-between items-center gap-4 text-xs font-black text-gray-400 uppercase tracking-[0.2em] relative z-10">
         <div className="flex items-center gap-3">
           <Logo size={24} className="opacity-70" />
           DriveSafe Engine v2.0

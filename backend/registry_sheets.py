@@ -28,6 +28,7 @@ COL_ERROR = 14
 class RegistrySheetsService:
     def __init__(self, service_account_json_path=None, sheet_id=None, user_credentials=None):
         self.scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        self._header_cache = {} # Cache for worksheet headers
         
         if user_credentials:
             self.client = gspread.authorize(user_credentials)
@@ -46,10 +47,18 @@ class RegistrySheetsService:
                 logger.error(f"Failed to open sheet {sheet_id}: {e}")
 
     def _get_header_map(self, worksheet):
-        """Scan the first row to map column names to their 0-based indices"""
-        headers = [h.strip().lower() for h in worksheet.row_values(1)]
+        """Scan the first row to map column names to their 0-based indices. Cached per worksheet."""
+        cache_key = f"{self.sheet_id}_{worksheet.title}"
+        if cache_key in self._header_cache:
+            return self._header_cache[cache_key]
+
+        try:
+            headers = [h.strip().lower() for h in worksheet.row_values(1)]
+        except Exception as e:
+            logger.error(f"Failed to fetch headers for {worksheet.title}: {e}")
+            return {}
+
         mapping = {}
-        
         # Define keywords to search for in headers
         keywords = {
             'project_id': ['project id', 'id', 'team id', 'team_id'],
@@ -71,10 +80,11 @@ class RegistrySheetsService:
 
         for key, synonyms in keywords.items():
             for i, header in enumerate(headers):
-                if any(syn in header for synonyms_list in [synonyms] for syn in synonyms_list):
+                if any(syn in header for syn in synonyms):
                     mapping[key] = i
                     break
         
+        self._header_cache[cache_key] = mapping
         return mapping
 
     def get_all_projects(self, sheet_name):

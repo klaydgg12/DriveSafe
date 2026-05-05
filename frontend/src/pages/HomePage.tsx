@@ -13,7 +13,7 @@ const HomePage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans relative overflow-hidden">
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans relative overflow-hidden transition-colors duration-300">
       {/* Background Mesh Gradients */}
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-indigo-500/10 blur-[100px] pointer-events-none"></div>
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-500/10 blur-[100px] pointer-events-none"></div>
@@ -22,8 +22,8 @@ const HomePage = () => {
       <nav className="bg-white/70 backdrop-blur-lg border-b border-gray-200/50 sticky top-0 z-50 transition-all">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Logo size={70} />
-            <span className="text-xl font-black text-gray-900 tracking-tight ml-1">DriveSafe</span>
+            <Logo size={50} />
+            <span className="text-xl font-black text-gray-900 tracking-tight ml-1 uppercase">DriveSafe</span>
           </div>
           <div className="hidden md:flex items-center gap-8 text-sm font-bold text-gray-500 uppercase tracking-widest">
             <a href="#" className="hover:text-indigo-600 transition-colors">Home</a>
@@ -47,7 +47,7 @@ const HomePage = () => {
               <span className="flex h-2 w-2 rounded-full bg-indigo-500 animate-pulse"></span>
               Free for Students & Educators
             </div>
-            <h1 className="text-5xl md:text-7xl font-black text-gray-900 tracking-tighter max-w-4xl mx-auto leading-[1.1]">
+            <h1 className="text-5xl md:text-7xl font-black text-gray-900 tracking-tighter max-w-4xl mx-auto leading-[1.1] uppercase">
               Automated Google Drive <br className="hidden md:block" />
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 animate-pulse">Backup Tool</span>
             </h1>
@@ -91,7 +91,7 @@ const HomePage = () => {
                 <div className="w-14 h-14 bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl flex items-center justify-center text-indigo-600 mb-6 group-hover:scale-110 group-hover:rotate-3 transition-transform duration-300 shadow-inner">
                   <Shield className="w-7 h-7" />
                 </div>
-                <h3 className="text-xl font-black text-gray-900 mb-3">Enterprise Security</h3>
+                <h3 className="text-xl font-black text-gray-900 mb-3 uppercase tracking-tight">Enterprise Security</h3>
                 <p className="text-gray-500 font-medium leading-relaxed">
                   OAuth 2.0 authentication ensures your data remains private and secure under your control.
                 </p>
@@ -101,7 +101,7 @@ const HomePage = () => {
                 <div className="w-14 h-14 bg-gradient-to-br from-purple-50 to-purple-100 rounded-2xl flex items-center justify-center text-purple-600 mb-6 group-hover:scale-110 group-hover:-rotate-3 transition-transform duration-300 shadow-inner">
                   <Zap className="w-7 h-7" />
                 </div>
-                <h3 className="text-xl font-black text-gray-900 mb-3">Lightning Fast</h3>
+                <h3 className="text-xl font-black text-gray-900 mb-3 uppercase tracking-tight">Lightning Fast</h3>
                 <p className="text-gray-500 font-medium leading-relaxed">
                   Process up to 100 files in under 2 minutes with our optimized multi-threaded engine.
                 </p>
@@ -111,7 +111,7 @@ const HomePage = () => {
                 <div className="w-14 h-14 bg-gradient-to-br from-pink-50 to-pink-100 rounded-2xl flex items-center justify-center text-pink-600 mb-6 group-hover:scale-110 group-hover:rotate-3 transition-transform duration-300 shadow-inner">
                   <Clock className="w-7 h-7 animate-float" />
                 </div>
-                <h3 className="text-xl font-black text-gray-900 mb-3">Backup History</h3>
+                <h3 className="text-xl font-black text-gray-900 mb-3 uppercase tracking-tight">Backup History</h3>
                 <p className="text-gray-500 font-medium leading-relaxed">
                   Access and manage your version history easily with our intuitive ledger system.
                 </p>
@@ -134,7 +134,7 @@ const HomePage = () => {
       </main>
 
       {/* Footer */}
-      <footer className="bg-white/80 backdrop-blur-md border-t border-gray-200/50 py-12 px-6 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] text-center z-10">
+      <footer className="bg-white/80 backdrop-blur-md border-t border-gray-200/50 py-12 px-6 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] text-center z-10 transition-colors">
         <p>&copy; 2026 DriveSafe &bull; RA 10173 Compliant &bull; Secure Archival System</p>
       </footer>
     </div>
