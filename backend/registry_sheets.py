@@ -147,6 +147,42 @@ class RegistrySheetsService:
             worksheet.batch_update(updates)
             logger.info(f"Updated row {row_index} dynamically in {sheet_name}")
 
+    def batch_update_statuses(self, sheet_name, status_updates):
+        """
+        Update multiple rows in one call.
+        status_updates: list of dicts like {'row_index': 2, 'status': 'Archived', 'kwargs': {...}}
+        """
+        if not status_updates: return
+        
+        worksheet = self.workbook.worksheet(sheet_name)
+        col_map = self._get_header_map(worksheet)
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        all_updates = []
+        for item in status_updates:
+            row_index = item['row_index']
+            status = item['status']
+            kwargs = item.get('kwargs', {})
+            
+            def add_to_batch(key, value):
+                if key in col_map and value is not None:
+                    col_letter = chr(65 + col_map[key])
+                    all_updates.append({'range': f'{col_letter}{row_index}', 'values': [[value]]})
+
+            add_to_batch('status', status)
+            add_to_batch('last_updated', timestamp)
+            add_to_batch('srs_path', kwargs.get('srs_path'))
+            add_to_batch('sdd_path', kwargs.get('sdd_path'))
+            add_to_batch('spmp_path', kwargs.get('spmp_path'))
+            add_to_batch('std_path', kwargs.get('std_path'))
+            add_to_batch('ri_path', kwargs.get('ri_path'))
+            add_to_batch('error', kwargs.get('error_msg'))
+
+        if all_updates:
+            # gspread supports batch_update on the worksheet
+            worksheet.batch_update(all_updates)
+            logger.info(f"Batch updated {len(status_updates)} rows in {sheet_name}")
+
     def get_workbook_name(self):
         """Get the title of the spreadsheet"""
         return self.workbook.title if self.workbook else "Unknown_Workbook"

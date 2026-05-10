@@ -125,17 +125,38 @@ def get_pending():
 def validate_links():
     if current_user.role != 'teacher':
         return jsonify({"error": "Unauthorized"}), 403
-    links = request.json.get('links', [])
+    
+    links = list(set(request.json.get('links', [])))  # Use set to avoid redundant checks
     results = {}
-    for link in links:
-        if not link: 
-            results[link] = "Empty"
-            continue
+    
+    from concurrent.futures import ThreadPoolExecutor
+
+    def check_link(link):
+        if not link:
+            return link, "Empty"
         try:
-            resp = requests.get(link, timeout=5, stream=True)
-            results[link] = "Accessible" if resp.status_code == 200 else f"Error {resp.status_code}"
-        except:
-            results[link] = "Failed"
+            # Use stream=True and only check headers to be faster
+            resp = requests.head(link, timeout=3, allow_redirects=True)
+            # Google Drive links might return 200 for the login page even if restricted, 
+            # but usually 200/302 means it exists.
+            status = "Accessible" if resp.status_code in [200, 301, 302] else f"Error {resp.status_code}"
+            return link, status
+        except Exception:
+            try:
+                # Fallback to GET if HEAD is blocked
+                resp = requests.get(link, timeout=3, stream=True)
+                status = "Accessible" if resp.status_code == 200 else "Failed"
+                return link, status
+            except:
+                return link, "Failed"
+
+    # Use up to 20 threads for fast parallel checking
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        future_to_link = {executor.submit(check_link, link): link for link in links}
+        for future in future_to_link:
+            link, status = future.result()
+            results[link] = status
+
     return jsonify(results)
 
 @registry_bp.route('/api/registry/archive', methods=['POST'])
@@ -160,44 +181,100 @@ def archive_selected():
     
     def process_task(app_context, project_list, creds, sid, wb_name):
         from concurrent.futures import ThreadPoolExecutor
-        # Bumping to 20 workers for maximum Professor-speed! 
-        # (Watch RAM usage on Hostinger)
-        with ThreadPoolExecutor(max_workers=20) as executor:
+        
+        # 1. INITIAL BATCH UPDATE: Set all to 'Processing' in one or two calls
+        # Filter projects that aren't already processing
+        to_process = []
+        for p in project_list:
+            tracker_key = f"{sid}_{p['academic_year']}_{p['row_index']}"
+            if LIVE_STATUS_TRACKER.get(tracker_key) != "Processing":
+                to_process.append(p)
+                LIVE_STATUS_TRACKER[tracker_key] = "Processing"
+        
+        if not to_process:
+            return
+
+        # Batch update Sheets to 'Processing'
+        with app_context.app_context():
+            try:
+                sheets_service, _ = get_services(requested_sheet_id=sid, provided_user_creds=creds)
+                from collections import defaultdict
+                init_updates = defaultdict(list)
+                for p in to_process:
+                    init_updates[p['academic_year']].append({
+                        'row_index': p['row_index'],
+                        'status': 'Processing'
+                    })
+                for s_name, upds in init_updates.items():
+                    sheets_service.batch_update_statuses(s_name, upds)
+            except Exception as e:
+                logger.error(f"Initial batch status update failed: {e}")
+            finally:
+                db.session.remove()
+
+        # 2. PARALLEL ARCHIVAL: Limit concurrency to 8 to protect Drive API quota
+        with ThreadPoolExecutor(max_workers=8) as executor:
             def process_single_project(p):
                 tracker_key = f"{sid}_{p['academic_year']}_{p['row_index']}"
-                LIVE_STATUS_TRACKER[tracker_key] = "Processing"
                 with app_context.app_context():
                     try:
-                        # Random small jitter to avoid simultaneous API bursts
+                        # Small random sleep to spread out requests
                         import time, random
-                        time.sleep(random.uniform(0.1, 0.8))
+                        time.sleep(random.uniform(0.1, 2.0))
 
-                        sheets_service, engine = get_services(requested_sheet_id=sid, provided_user_creds=creds)
-                        sheets_service.update_status(p['academic_year'], p['row_index'], 'Processing')
-                        
+                        _, engine = get_services(requested_sheet_id=sid, provided_user_creds=creds)
                         result = engine.archive_project(p, workbook_name=wb_name)
+                        
                         status = result['status'].capitalize()
                         if result['status'] == 'unchanged': status = 'Archived'
                         
                         LIVE_STATUS_TRACKER[tracker_key] = status
                         paths = result.get('paths', {})
-                        sheets_service.update_status(
-                            p['academic_year'], p['row_index'], status,
-                            srs_path=paths.get('srs'), sdd_path=paths.get('sdd'),
-                            spmp_path=paths.get('spmp'), std_path=paths.get('std'),
-                            ri_path=paths.get('ri'), error_msg=result.get('error')
-                        )
+                        
+                        return {
+                            'sheet_name': p['academic_year'],
+                            'row_index': p['row_index'],
+                            'status': status,
+                            'kwargs': {
+                                'srs_path': paths.get('srs'),
+                                'sdd_path': paths.get('sdd'),
+                                'spmp_path': paths.get('spmp'),
+                                'std_path': paths.get('std'),
+                                'ri_path': paths.get('ri'),
+                                'error_msg': result.get('error')
+                            }
+                        }
                     except Exception as e:
                         logger.error(f"Failed to process {p.get('project_title')}: {e}")
                         LIVE_STATUS_TRACKER[tracker_key] = "Failed"
-                        try:
-                            sheets_service, _ = get_services(requested_sheet_id=sid, provided_user_creds=creds)
-                            sheets_service.update_status(p['academic_year'], p['row_index'], 'Failed', error_msg=str(e))
-                        except: pass
+                        return {
+                            'sheet_name': p['academic_year'],
+                            'row_index': p['row_index'],
+                            'status': 'Failed',
+                            'kwargs': {'error_msg': str(e)}
+                        }
                     finally:
                         db.session.remove()
 
-            list(executor.map(process_single_project, project_list))
+            results = list(executor.map(process_single_project, to_process))
+            
+            # 3. FINAL BATCH UPDATE: Save all results
+            from collections import defaultdict
+            final_updates = defaultdict(list)
+            for res in results:
+                if res:
+                    final_updates[res['sheet_name']].append(res)
+            
+            if final_updates:
+                with app_context.app_context():
+                    try:
+                        sheets_service, _ = get_services(requested_sheet_id=sid, provided_user_creds=creds)
+                        for sheet_name, status_updates in final_updates.items():
+                            sheets_service.batch_update_statuses(sheet_name, status_updates)
+                    except Exception as e:
+                        logger.error(f"Final batch update failed: {e}")
+                    finally:
+                        db.session.remove()
 
     thread = threading.Thread(target=process_task, args=(app, projects, user_creds, sheet_id, workbook_name))
     thread.start()

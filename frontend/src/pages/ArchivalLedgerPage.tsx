@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { 
   Folder, ChevronRight, ChevronDown, FileText, Download, Eye, Calendar, 
@@ -43,6 +43,9 @@ const ArchivalLedgerPage = () => {
   const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
 
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const projectsPerPage = 25;
+
   useEffect(() => { fetchWorkbooks(); }, []);
   useEffect(() => { fetchYears(selectedWorkbook); }, [selectedWorkbook]);
   useEffect(() => { fetchLedger(); }, [selectedYear, selectedWorkbook]);
@@ -84,6 +87,7 @@ const ArchivalLedgerPage = () => {
       });
 
       setProjects(projectsWithStatus);
+      setCurrentPage(1);
     } catch (err) { console.error("Failed to fetch ledger:", err); }
     finally { setLoading(false); }
   };
@@ -151,11 +155,24 @@ const ArchivalLedgerPage = () => {
     return { text: "text-gray-600", bg: "bg-gray-50", border: "border-gray-100", icon: <FileText size={16} /> };
   };
 
-  const filteredProjects = projects.filter(p => {
-    const matchesSearch = p.project_title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          p.project_id.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesSearch;
-  });
+  const filteredAndSortedProjects = useMemo(() => {
+    return projects
+      .filter(p => {
+        const matchesSearch = p.project_title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                              p.project_id.toLowerCase().includes(searchQuery.toLowerCase());
+        return matchesSearch;
+      })
+      .sort((a, b) => {
+        // Natural sort for Project ID (Team 2 before Team 10)
+        return a.project_id.localeCompare(b.project_id, undefined, { numeric: true, sensitivity: 'base' });
+      });
+  }, [projects, searchQuery]);
+
+  const totalPages = Math.ceil(filteredAndSortedProjects.length / projectsPerPage);
+  const paginatedProjects = useMemo(() => {
+    const startIndex = (currentPage - 1) * projectsPerPage;
+    return filteredAndSortedProjects.slice(startIndex, startIndex + projectsPerPage);
+  }, [filteredAndSortedProjects, currentPage]);
 
   return (
     <div className="min-h-screen bg-[#f8fafc] flex flex-col font-sans transition-colors duration-300">
@@ -176,13 +193,13 @@ const ArchivalLedgerPage = () => {
             <div className="flex items-center gap-1.5">
               <div className="flex items-center gap-1.5 px-2 border-r border-slate-200">
                 <BookOpen size={14} className="text-slate-400" />
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Workbook</span>
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap hidden sm:inline">Workbook</span>
               </div>
               <div className="relative">
                 <select 
                   value={selectedWorkbook} 
                   onChange={(e) => setSelectedWorkbook(e.target.value)}
-                  className="appearance-none bg-white border border-transparent text-slate-900 text-xs font-black rounded-lg px-3 py-1.5 pr-8 focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[140px]"
+                  className="appearance-none bg-white border border-transparent text-slate-900 text-[10px] font-black rounded-lg px-2 py-1.5 pr-8 focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[120px] max-w-[160px] truncate"
                 >
                   <option value="">ALL WORKBOOKS</option>
                   {workbooks.map(w => <option key={w} value={w}>{w}</option>)}
@@ -194,13 +211,13 @@ const ArchivalLedgerPage = () => {
             <div className="flex items-center gap-1.5">
               <div className="flex items-center gap-1.5 px-2 border-r border-slate-200">
                 <Filter size={14} className="text-slate-400" />
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Sheet</span>
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap hidden sm:inline">Sheet</span>
               </div>
               <div className="relative">
                 <select 
                   value={selectedYear} 
                   onChange={(e) => setSelectedYear(e.target.value)}
-                  className="appearance-none bg-white border border-transparent text-slate-900 text-xs font-black rounded-lg px-3 py-1.5 pr-8 focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[120px]"
+                  className="appearance-none bg-white border border-transparent text-slate-900 text-[10px] font-black rounded-lg px-2 py-1.5 pr-8 focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[100px]"
                 >
                   <option value="">ALL SHEETS</option>
                   {years.map(y => <option key={y} value={y}>{y}</option>)}
@@ -230,7 +247,7 @@ const ArchivalLedgerPage = () => {
             placeholder="Search archives by project name or ID..."
             className="w-full pl-11 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl shadow-sm focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none text-sm font-medium transition-all"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {setSearchQuery(e.target.value); setCurrentPage(1);}}
           />
         </div>
 
@@ -239,7 +256,7 @@ const ArchivalLedgerPage = () => {
             <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin" />
             <p className="text-slate-400 font-bold uppercase tracking-[0.2em] text-xs">Accessing Secure Archives...</p>
           </div>
-        ) : filteredProjects.length === 0 ? (
+        ) : paginatedProjects.length === 0 ? (
           <div className="py-24 text-center">
             <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4 text-slate-300">
               <FileSearch size={32} />
@@ -248,7 +265,7 @@ const ArchivalLedgerPage = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3">
-            {filteredProjects.map((project) => {
+            {paginatedProjects.map((project) => {
               const pKey = `${project.project_id}-${project.project_title}`;
               const isExpanded = expandedProjects.has(pKey);
 
@@ -394,6 +411,38 @@ const ArchivalLedgerPage = () => {
                 </div>
               );
             })}
+            
+            {/* Pagination UI */}
+            <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4 p-4 bg-white border border-slate-200 rounded-2xl text-xs font-black text-slate-400 uppercase tracking-[0.2em]">
+                <div className="flex items-center gap-4 order-2 sm:order-1">
+                    <span>Total Projects: {filteredAndSortedProjects.length}</span>
+                </div>
+                
+                <div className="flex items-center gap-2 order-1 sm:order-2">
+                    <button 
+                        onClick={() => {setCurrentPage(prev => Math.max(prev - 1, 1)); window.scrollTo(0,0);}}
+                        disabled={currentPage === 1}
+                        className="p-2 bg-slate-50 border border-slate-200 rounded-lg hover:bg-indigo-50 hover:text-indigo-600 transition-all disabled:opacity-30"
+                    >
+                        <ArrowLeft size={14} />
+                    </button>
+                    <div className="px-4 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900">
+                        PAGE <span className="text-indigo-600">{currentPage}</span> / {totalPages || 1}
+                    </div>
+                    <button 
+                        onClick={() => {setCurrentPage(prev => Math.min(prev + 1, totalPages)); window.scrollTo(0,0);}}
+                        disabled={currentPage >= totalPages}
+                        className="p-2 bg-slate-50 border border-slate-200 rounded-lg hover:bg-indigo-50 hover:text-indigo-600 transition-all disabled:opacity-30"
+                    >
+                        <ChevronRight size={14} />
+                    </button>
+                </div>
+
+                <div className="hidden lg:flex items-center gap-3 order-3">
+                    <Logo size={24} />
+                    <span>Secure Ledger Protocol</span>
+                </div>
+            </div>
           </div>
         )}
       </main>

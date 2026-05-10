@@ -13,7 +13,8 @@ import {
   Filter,
   CheckSquare,
   Square,
-  ChevronUp
+  ChevronUp,
+  ChevronRight
 } from "lucide-react";
 import Logo from "../components/Logo";
 
@@ -53,6 +54,9 @@ const RegistryDashboard: React.FC = () => {
     const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
     const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);
 
+    const [currentPage, setCurrentPage] = useState<number>(1);
+    const projectsPerPage = 25;
+
     useEffect(() => {
         let interval: any;
         if (isProcessing) {
@@ -78,7 +82,10 @@ const RegistryDashboard: React.FC = () => {
         if (selectedWorkbookId) fetchYears(selectedWorkbookId);
     }, [selectedWorkbookId]);
     useEffect(() => {
-        if (selectedYear && selectedWorkbookId) fetchProjects(selectedYear, selectedWorkbookId);
+        if (selectedYear && selectedWorkbookId) {
+            fetchProjects(selectedYear, selectedWorkbookId);
+            setCurrentPage(1);
+        }
     }, [selectedYear, selectedWorkbookId]);
 
     const fetchWorkbooks = async () => {
@@ -119,7 +126,7 @@ const RegistryDashboard: React.FC = () => {
     };
 
     const handleSelectAll = () => {
-        const visibleProjectIndices = filteredAndSortedProjects.map(p => p.row_index);
+        const visibleProjectIndices = paginatedProjects.map(p => p.row_index);
         const allVisibleSelected = visibleProjectIndices.every(idx => selectedRows.includes(idx));
         if (allVisibleSelected) {
             setSelectedRows(prev => prev.filter(idx => !visibleProjectIndices.includes(idx)));
@@ -168,6 +175,7 @@ const RegistryDashboard: React.FC = () => {
             setSortField(field);
             setSortOrder('asc');
         }
+        setCurrentPage(1);
     };
 
     const filteredAndSortedProjects = useMemo(() => {
@@ -177,13 +185,20 @@ const RegistryDashboard: React.FC = () => {
                 p.project_id.toLowerCase().includes(searchQuery.toLowerCase())
             )
             .sort((a, b) => {
-                const valA = (a[sortField] || '').toString().toLowerCase();
-                const valB = (b[sortField] || '').toString().toLowerCase();
-                if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
-                if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
-                return 0;
+                const valA = (a[sortField] || '').toString();
+                const valB = (b[sortField] || '').toString();
+                
+                // Natural sort: handles "Team 2" vs "Team 10" correctly
+                const comparison = valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' });
+                return sortOrder === 'asc' ? comparison : -comparison;
             });
     }, [projects, searchQuery, sortField, sortOrder]);
+
+    const totalPages = Math.ceil(filteredAndSortedProjects.length / projectsPerPage);
+    const paginatedProjects = useMemo(() => {
+        const startIndex = (currentPage - 1) * projectsPerPage;
+        return filteredAndSortedProjects.slice(startIndex, startIndex + projectsPerPage);
+    }, [filteredAndSortedProjects, currentPage]);
 
     const getStatusBadge = (status: string) => {
         const s = status.toLowerCase();
@@ -206,7 +221,7 @@ const RegistryDashboard: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 transition-colors duration-300">
+        <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 transition-colors duration-300 overflow-x-hidden">
             {showConfirmModal && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="bg-white w-full max-w-sm rounded-[2rem] shadow-2xl p-6 space-y-4 animate-in zoom-in-95">
@@ -228,40 +243,50 @@ const RegistryDashboard: React.FC = () => {
             )}
             
             <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-50 transition-all">
-                <div className="max-w-[1500px] mx-auto px-6 h-16 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
+                <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 shrink-0">
                         <button onClick={() => window.location.hash = "dashboard"} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all">
                             <ArrowLeft className="w-4 h-4" />
                         </button>
-                        <div className="h-6 w-px bg-slate-100"></div>
+                        <div className="h-6 w-px bg-slate-100 hidden sm:block"></div>
                         <div className="flex items-center gap-2">
                             <Logo size={44} />
-                            <div className="flex flex-col">
+                            <div className="flex flex-col hidden md:block">
                                 <span className="text-xl font-black tracking-tight leading-none uppercase">Capstone Archiver</span>
                             </div>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl border border-slate-200 mr-2">
-                        <div className="flex items-center gap-1.5">
-                            <div className="flex items-center gap-1.5 px-2 border-r border-slate-200">
+                    <div className="flex items-center gap-1 md:gap-2 bg-slate-50 p-1 rounded-xl border border-slate-200 shrink-0">
+                        <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1.5 px-2 border-r border-slate-200 shrink-0">
                                 <BookOpen className="w-3.5 h-3.5 text-slate-400" />
-                                <span className="text-xs font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Workbook</span>
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap hidden lg:inline">Workbook</span>
                             </div>
-                            <div className="relative group">
-                                <select value={selectedWorkbookId} onChange={(e) => setSelectedWorkbookId(e.target.value)} className="appearance-none bg-white border border-transparent text-slate-900 text-sm font-black rounded-lg px-3 py-1.5 pr-8 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[140px]">
-                                    {workbooks.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                            <div className="relative shrink-0">
+                                <select 
+                                    value={selectedWorkbookId} 
+                                    onChange={(e) => setSelectedWorkbookId(e.target.value)} 
+                                    title={workbooks.find(w => w.id === selectedWorkbookId)?.name}
+                                    className="appearance-none bg-white border border-transparent text-slate-900 text-[11px] md:text-xs font-black rounded-lg px-2 md:px-3 py-1.5 pr-8 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm w-[120px] md:w-[180px] truncate"
+                                >
+                                    {workbooks.map(w => <option key={w.id} value={w.id} title={w.name}>{w.name}</option>)}
                                 </select>
                                 <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
                             </div>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                            <div className="flex items-center gap-1.5 px-2 border-r border-slate-200">
+                        <div className="w-px h-4 bg-slate-200"></div>
+                        <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1.5 px-2 border-r border-slate-200 shrink-0">
                                 <Filter className="w-3.5 h-3.5 text-slate-400" />
-                                <span className="text-xs font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Sheet</span>
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap hidden lg:inline">Sheet</span>
                             </div>
-                            <div className="relative group">
-                                <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)} className="appearance-none bg-white border border-transparent text-slate-900 text-sm font-black rounded-lg px-3 py-1.5 pr-8 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[120px]">
+                            <div className="relative shrink-0">
+                                <select 
+                                    value={selectedYear} 
+                                    onChange={(e) => setSelectedYear(e.target.value)} 
+                                    className="appearance-none bg-white border border-transparent text-slate-900 text-[11px] md:text-xs font-black rounded-lg px-2 md:px-3 py-1.5 pr-8 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm w-[80px] md:w-[120px] truncate"
+                                >
                                     {years.map(y => <option key={y} value={y}>{y}</option>)}
                                 </select>
                                 <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
@@ -271,25 +296,25 @@ const RegistryDashboard: React.FC = () => {
                 </div>
             </header>
 
-            <main className="max-w-[1500px] mx-auto w-full p-4 md:p-6 space-y-4">
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <main className="max-w-7xl mx-auto w-full p-4 md:p-6 space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="flex flex-wrap items-center gap-2">
-                        <div className="relative group min-w-[280px]">
+                        <div className="relative group min-w-[200px] md:min-w-[280px]">
                             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-600 transition-colors" />
-                            <input type="text" placeholder="Search project..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-white border border-slate-100 rounded-xl focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none text-sm font-medium transition-all shadow-sm" />
+                            <input type="text" placeholder="Search..." value={searchQuery} onChange={(e) => {setSearchQuery(e.target.value); setCurrentPage(1);}} className="w-full pl-10 pr-4 py-2 bg-white border border-slate-100 rounded-xl focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none text-sm font-medium transition-all shadow-sm" />
                         </div>
-                        <button onClick={validateLinks} disabled={loading || projects.length === 0} className="px-4 py-2 bg-white border border-indigo-100 text-indigo-600 text-xs font-black rounded-xl hover:bg-indigo-50 transition-all flex items-center gap-2 shadow-sm disabled:opacity-50">
-                            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Validate
+                        <button onClick={validateLinks} disabled={loading || projects.length === 0} className="px-3 md:px-4 py-2 bg-white border border-indigo-100 text-indigo-600 text-[10px] md:text-xs font-black rounded-xl hover:bg-indigo-50 transition-all flex items-center gap-2 shadow-sm disabled:opacity-50">
+                            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> <span className="hidden sm:inline">Validate Links</span><span className="sm:hidden">Validate</span>
                         </button>
                     </div>
 
                     <div className="flex items-center gap-2">
-                        <div className="bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center gap-2">
-                            <span className="text-xs font-black text-indigo-600 uppercase tracking-widest">Selected</span>
-                            <span className="w-5 h-5 bg-indigo-600 text-white text-xs font-black rounded-md flex items-center justify-center shadow-lg shadow-indigo-200">{selectedRows.length}</span>
+                        <div className="bg-indigo-50 px-2 md:px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center gap-2">
+                            <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest hidden sm:inline">Selected</span>
+                            <span className="w-5 h-5 bg-indigo-600 text-white text-[10px] font-black rounded-md flex items-center justify-center shadow-lg shadow-indigo-200">{selectedRows.length}</span>
                         </div>
-                        <button onClick={() => setShowConfirmModal(true)} disabled={isProcessing || selectedRows.length === 0} className="px-6 py-2.5 bg-indigo-600 text-white text-xs font-black rounded-xl hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-xl shadow-indigo-100 disabled:opacity-50">
-                            <Download className="w-3.5 h-3.5" /> Archive Selected
+                        <button onClick={() => setShowConfirmModal(true)} disabled={isProcessing || selectedRows.length === 0} className="px-4 md:px-6 py-2.5 bg-indigo-600 text-white text-[10px] md:text-xs font-black rounded-xl hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-xl shadow-indigo-100 disabled:opacity-50">
+                            <Download className="w-3.5 h-3.5" /> Archive
                         </button>
                         <button onClick={() => fetchProjects(selectedYear, selectedWorkbookId)} className="p-2.5 bg-white border border-slate-200 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all shadow-sm">
                             <RotateCcw className="w-4 h-4" />
@@ -300,41 +325,41 @@ const RegistryDashboard: React.FC = () => {
                 {message && (
                     <div className={`p-3 rounded-xl border flex items-center justify-between shadow-sm animate-in slide-in-from-top-4 duration-300 ${message.type === 'error' ? 'bg-red-50 border-red-100 text-red-700' : message.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-indigo-50 border-indigo-100 text-indigo-700'}`}>
                         <div className="flex items-center gap-3">
-                            <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${message.type === 'error' ? 'bg-red-100' : message.type === 'success' ? 'bg-emerald-100' : 'bg-indigo-100'}`}>
+                            <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${message.type === 'error' ? 'bg-red-100' : message.type === 'success' ? 'bg-emerald-100' : 'bg-indigo-100'}`}>
                                 {message.type === 'error' ? <AlertCircle className="w-3.5 h-3.5" /> : <CheckCircle className="w-3.5 h-3.5" />}
                             </div>
-                            <span className="text-sm font-bold">{message.text}</span>
+                            <span className="text-sm font-bold truncate">{message.text}</span>
                         </div>
-                        <button onClick={() => setMessage(null)} className="text-xs font-black uppercase tracking-widest opacity-50 hover:opacity-100 px-3">Dismiss</button>
+                        <button onClick={() => setMessage(null)} className="text-[10px] font-black uppercase tracking-widest opacity-50 hover:opacity-100 px-3 shrink-0">Dismiss</button>
                     </div>
                 )}
 
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/40 overflow-hidden transition-all">
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
+                    <div className="overflow-x-auto custom-scrollbar">
+                        <table className="w-full text-left border-collapse min-w-[800px]">
                             <thead>
                                 <tr className="bg-slate-50/80 border-b border-slate-100">
                                     <th className="px-4 py-3 w-12 text-center">
                                         <button onClick={handleSelectAll} className="w-4 h-4 mx-auto flex items-center justify-center rounded transition-colors hover:bg-indigo-50 text-indigo-600">
-                                            {filteredAndSortedProjects.length > 0 && filteredAndSortedProjects.every(p => selectedRows.includes(p.row_index)) ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                                            {paginatedProjects.length > 0 && paginatedProjects.every(p => selectedRows.includes(p.row_index)) ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
                                         </button>
                                     </th>
-                                    <th onClick={() => handleSort('project_id')} className="px-4 py-3 cursor-pointer group whitespace-nowrap">
+                                    <th onClick={() => handleSort('project_id')} className="px-4 py-3 cursor-pointer group whitespace-nowrap w-24">
                                         <div className="flex items-center gap-2">
-                                            <span className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">ID</span>
+                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">ID</span>
                                             {renderSortIcon('project_id')}
                                         </div>
                                     </th>
-                                    <th onClick={() => handleSort('project_title')} className="px-4 py-3 cursor-pointer group min-w-[300px]">
+                                    <th onClick={() => handleSort('project_title')} className="px-4 py-3 cursor-pointer group min-w-[200px]">
                                         <div className="flex items-center gap-2">
-                                            <span className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">Project Title</span>
+                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Project Title</span>
                                             {renderSortIcon('project_title')}
                                         </div>
                                     </th>
-                                    <th className="px-4 py-3"><span className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">Assets</span></th>
-                                    <th onClick={() => handleSort('status')} className="px-4 py-3 cursor-pointer group text-right pr-10">
+                                    <th className="px-4 py-3 w-[260px]"><span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Assets</span></th>
+                                    <th onClick={() => handleSort('status')} className="px-4 py-3 cursor-pointer group text-right pr-6 md:pr-10 w-32">
                                         <div className="flex items-center justify-end gap-2">
-                                            <span className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">Status</span>
+                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Status</span>
                                             {renderSortIcon('status')}
                                         </div>
                                     </th>
@@ -350,7 +375,7 @@ const RegistryDashboard: React.FC = () => {
                                             </div>
                                         </td>
                                     </tr>
-                                ) : filteredAndSortedProjects.length === 0 ? (
+                                ) : paginatedProjects.length === 0 ? (
                                     <tr>
                                         <td colSpan={5} className="px-4 py-20">
                                             <div className="flex flex-col items-center gap-3 max-w-xs mx-auto text-center">
@@ -362,7 +387,7 @@ const RegistryDashboard: React.FC = () => {
                                             </div>
                                         </td>
                                     </tr>
-                                ) : filteredAndSortedProjects.map((p) => {
+                                ) : paginatedProjects.map((p) => {
                                     const isSelected = selectedRows.includes(p.row_index);
                                     return (
                                         <tr key={p.row_index} className={`group transition-all duration-200 ${isSelected ? 'bg-indigo-50/30' : 'hover:bg-slate-50/50'}`}>
@@ -428,15 +453,36 @@ const RegistryDashboard: React.FC = () => {
                             </tbody>
                         </table>
                     </div>
-                    <div className="bg-slate-50/50 px-6 py-3 border-t border-slate-100 flex items-center justify-between text-xs font-black text-slate-400 uppercase tracking-[0.2em]">
-                        <div className="flex items-center gap-4">
+                    <div className="bg-slate-50/50 px-6 py-3 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-black text-slate-400 uppercase tracking-[0.2em]">
+                        <div className="flex items-center gap-4 order-2 sm:order-1">
                             <span>Total: {filteredAndSortedProjects.length}</span>
                             <span>Selected: {selectedRows.length}</span>
                         </div>
-                        <div className="flex items-center gap-3">
+                        
+                        {/* Pagination UI */}
+                        <div className="flex items-center gap-2 order-1 sm:order-2">
+                            <button 
+                                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                                disabled={currentPage === 1}
+                                className="p-2 bg-white border border-slate-200 rounded-lg hover:bg-indigo-50 hover:text-indigo-600 transition-all disabled:opacity-30 disabled:hover:bg-white disabled:hover:text-slate-400"
+                            >
+                                <ArrowLeft className="w-3 h-3" />
+                            </button>
+                            <div className="px-4 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 shadow-sm">
+                                PAGE <span className="text-indigo-600">{currentPage}</span> / {totalPages || 1}
+                            </div>
+                            <button 
+                                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                                disabled={currentPage >= totalPages}
+                                className="p-2 bg-white border border-slate-200 rounded-lg hover:bg-indigo-50 hover:text-indigo-600 transition-all disabled:opacity-30 disabled:hover:bg-white disabled:hover:text-slate-400"
+                            >
+                                <ChevronRight className="w-3 h-3" />
+                            </button>
+                        </div>
+
+                        <div className="hidden lg:flex items-center gap-3 order-3">
                             <div className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Verified</div>
                             <div className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span> Pending</div>
-                            <div className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-400"></span> Error</div>
                         </div>
                     </div>
                 </div>
@@ -446,3 +492,4 @@ const RegistryDashboard: React.FC = () => {
 };
 
 export default RegistryDashboard;
+
