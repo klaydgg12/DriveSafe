@@ -79,17 +79,17 @@ const DashboardPage: React.FC = () => {
       <main className="max-w-7xl mx-auto w-full p-6 md:p-10 space-y-10 relative z-10">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div className="space-y-2">
-            <h2 className="text-4xl font-black text-gray-900 tracking-tighter uppercase">System Console</h2>
+            <h2 className="text-4xl font-black text-gray-900 tracking-tighter">System Console</h2>
             <p className="text-gray-500 font-medium text-lg">Archival integrity monitoring & management</p>
           </div>
           <div className="flex items-center gap-2 bg-white/80 backdrop-blur-sm p-1.5 rounded-2xl border border-gray-200/60 shadow-sm">
              <div className="px-4 py-2 bg-gray-50/80 rounded-xl flex items-center gap-2">
                 <Activity className="w-4 h-4 text-indigo-500" />
-                <span className="text-xs font-black text-gray-500 uppercase tracking-[0.2em]">Sync: {stats?.last_sync.split(' ')[1]}</span>
+                <span className="text-xs font-black text-gray-500 tracking-[0.2em]">Sync: {stats?.last_sync.split(' ')[1]}</span>
              </div>
              <div className="px-5 py-2 bg-gradient-to-r from-emerald-400 to-emerald-500 rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-200/50">
                 <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse shadow-[0_0_8px_rgba(255,255,255,0.8)]"></span>
-                <span className="text-xs font-black text-white uppercase tracking-[0.2em]">Live</span>
+                <span className="text-xs font-black text-white tracking-[0.2em]">Live</span>
              </div>
           </div>
         </div>
@@ -98,7 +98,7 @@ const DashboardPage: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white/80 backdrop-blur-md p-8 rounded-[2rem] border border-gray-200/60 shadow-sm flex items-center justify-between group hover:border-indigo-200 hover:shadow-xl transition-all duration-300">
             <div className="space-y-2">
-              <p className="text-xs font-black text-gray-400 uppercase tracking-[0.2em]">Pending Projects</p>
+              <p className="text-xs font-black text-gray-400 tracking-[0.2em]">Pending Projects</p>
               <p className="text-5xl font-black text-gray-900 tracking-tighter group-hover:text-indigo-600 transition-colors">{stats?.pending_count}</p>
             </div>
             <div className="w-16 h-16 bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl flex items-center justify-center text-indigo-600 shadow-inner group-hover:scale-110 transition-transform">
@@ -107,7 +107,7 @@ const DashboardPage: React.FC = () => {
           </div>
           <div className="bg-white/80 backdrop-blur-md p-8 rounded-[2rem] border border-gray-200/60 shadow-sm flex items-center justify-between group hover:border-emerald-200 hover:shadow-xl transition-all duration-300">
             <div className="space-y-2">
-              <p className="text-xs font-black text-gray-400 uppercase tracking-[0.2em]">Total Archived</p>
+              <p className="text-xs font-black text-gray-400 tracking-[0.2em]">Total Archived</p>
               <p className="text-5xl font-black text-gray-900 tracking-tighter group-hover:text-emerald-600 transition-colors">{stats?.archived_count}</p>
             </div>
             <div className="w-16 h-16 bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-2xl flex items-center justify-center text-emerald-600 shadow-inner group-hover:scale-110 transition-transform">
@@ -116,9 +116,9 @@ const DashboardPage: React.FC = () => {
           </div>
           <div className="bg-white/80 backdrop-blur-md p-8 rounded-[2rem] border border-gray-200/60 shadow-sm flex items-center justify-between group hover:border-indigo-200 hover:shadow-xl transition-all duration-300">
             <div className="space-y-2">
-              <p className="text-xs font-black text-gray-400 uppercase tracking-[0.2em]">Auth Protocol</p>
+              <p className="text-xs font-black text-gray-400 tracking-[0.2em]">Auth Protocol</p>
               <p className={`text-2xl font-black tracking-tighter ${stats?.service_account_configured ? 'text-indigo-600' : 'text-red-500'}`}>
-                {stats?.service_account_configured ? "SECURED" : "REQUIRED"}
+                {stats?.service_account_configured ? "Secured" : "Required"}
               </p>
             </div>
             <div className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-inner group-hover:scale-110 transition-transform ${stats?.service_account_configured ? 'bg-gradient-to-br from-indigo-50 to-indigo-100 text-indigo-600' : 'bg-gradient-to-br from-red-50 to-red-100 text-red-500'}`}>
@@ -136,15 +136,15 @@ const DashboardPage: React.FC = () => {
             <div className="w-20 h-20 bg-gradient-to-br from-indigo-500 to-indigo-700 rounded-[1.5rem] flex items-center justify-center text-white mb-8 group-hover:scale-110 transition-transform duration-500 shadow-xl shadow-indigo-200/50">
               <LayoutDashboard className="w-10 h-10" />
             </div>
-            <h3 className="text-xl font-black text-gray-900 mb-4 tracking-tighter uppercase">Capstone Archiver</h3>
+            <h3 className="text-xl font-black text-gray-900 mb-4 tracking-tighter">Registry</h3>
             <p className="text-gray-500 font-medium mb-10 leading-relaxed text-lg max-w-md">
               Execute archival sequences, validate links, and synchronize local storage with Google Drive.
             </p>
             <button 
               onClick={() => window.location.hash = "registry-dashboard"}
-              className="w-full flex items-center justify-center gap-3 py-5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-sm uppercase tracking-[0.2em] transition-all shadow-xl shadow-indigo-200 hover:shadow-2xl active:scale-[0.98]"
+              className="w-full flex items-center justify-center gap-3 py-5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-sm tracking-[0.2em] transition-all shadow-xl shadow-indigo-200 hover:shadow-2xl active:scale-[0.98]"
             >
-              Launch Archiver <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              Open Registry <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
             </button>
           </div>
 
@@ -155,15 +155,26 @@ const DashboardPage: React.FC = () => {
             <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-[1.5rem] flex items-center justify-center text-white mb-8 group-hover:scale-110 transition-transform duration-500 shadow-xl shadow-purple-200/50">
               <History className="w-10 h-10" />
             </div>
+<<<<<<< Updated upstream
             <h3 className="text-3xl font-black text-gray-900 mb-4 tracking-tighter uppercase">Archival Ledger</h3>
+=======
+            <h3 className="text-3xl font-black text-gray-900 mb-4 tracking-tighter">Archival Ledger</h3>
+>>>>>>> Stashed changes
             <p className="text-gray-500 font-medium mb-10 leading-relaxed text-lg max-w-md">
               Access historical records, audit cryptographic signatures, and manage document versioning.
             </p>
             <button 
+<<<<<<< Updated upstream
               onClick={() => window.location.hash = "ledger"}
               className="w-full flex items-center justify-center gap-3 py-5 bg-white border-2 border-indigo-600 text-indigo-600 hover:bg-indigo-50 rounded-2xl font-black text-sm uppercase tracking-[0.2em] transition-all active:scale-[0.98]"
             >
               Access Archival Ledger <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+=======
+              onClick={() => window.location.hash = "backup-history"}
+              className="w-full flex items-center justify-center gap-3 py-5 bg-white border-2 border-indigo-600 text-indigo-600 hover:bg-indigo-50 rounded-2xl font-black text-sm tracking-[0.2em] transition-all active:scale-[0.98]"
+            >
+              View Ledger <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+>>>>>>> Stashed changes
             </button>
           </div>
         </div>

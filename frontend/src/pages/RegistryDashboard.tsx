@@ -252,7 +252,7 @@ const RegistryDashboard: React.FC = () => {
                         <div className="flex items-center gap-2">
                             <Logo size={44} />
                             <div className="flex flex-col hidden md:block">
-                                <span className="text-xl font-black tracking-tight leading-none uppercase">Capstone Archiver</span>
+                                <span className="text-xl font-black tracking-tight leading-none">Registry</span>
                             </div>
                         </div>
                     </div>
@@ -261,7 +261,7 @@ const RegistryDashboard: React.FC = () => {
                         <div className="flex items-center gap-1">
                             <div className="flex items-center gap-1.5 px-2 border-r border-slate-200 shrink-0">
                                 <BookOpen className="w-3.5 h-3.5 text-slate-400" />
-                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap hidden lg:inline">Workbook</span>
+                                <span className="text-[10px] font-black text-slate-400 tracking-widest whitespace-nowrap hidden lg:inline">Workbook</span>
                             </div>
                             <div className="relative shrink-0">
                                 <select 
@@ -346,20 +346,20 @@ const RegistryDashboard: React.FC = () => {
                                     </th>
                                     <th onClick={() => handleSort('project_id')} className="px-4 py-3 cursor-pointer group whitespace-nowrap w-24">
                                         <div className="flex items-center gap-2">
-                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">ID</span>
+                                            <span className="text-[10px] font-black text-slate-400 tracking-[0.2em]">ID</span>
                                             {renderSortIcon('project_id')}
                                         </div>
                                     </th>
                                     <th onClick={() => handleSort('project_title')} className="px-4 py-3 cursor-pointer group min-w-[200px]">
                                         <div className="flex items-center gap-2">
-                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Project Title</span>
+                                            <span className="text-[10px] font-black text-slate-400 tracking-[0.2em]">Project Title</span>
                                             {renderSortIcon('project_title')}
                                         </div>
                                     </th>
-                                    <th className="px-4 py-3 w-[260px]"><span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Assets</span></th>
+                                    <th className="px-4 py-3 w-[260px]"><span className="text-[10px] font-black text-slate-400 tracking-[0.2em]">Assets</span></th>
                                     <th onClick={() => handleSort('status')} className="px-4 py-3 cursor-pointer group text-right pr-6 md:pr-10 w-32">
                                         <div className="flex items-center justify-end gap-2">
-                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Status</span>
+                                            <span className="text-[10px] font-black text-slate-400 tracking-[0.2em]">Status</span>
                                             {renderSortIcon('status')}
                                         </div>
                                     </th>

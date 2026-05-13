@@ -53,10 +53,8 @@ const ArchivalLedgerPage = () => {
   const fetchWorkbooks = async () => {
     try {
       const resp = await axios.get(`/api/registry/ledger/workbooks`, { withCredentials: true });
-      const availableWorkbooks = resp.data;
-      setWorkbooks(availableWorkbooks);
-      // Don't auto-select "Archives" if there are other options, but default to "All"
-      setSelectedWorkbook(""); 
+      setWorkbooks(resp.data);
+      // Ensure we keep the "All" default unless specifically filtered
     } catch (err) { console.error("Failed to fetch workbooks:", err); }
   };
 
@@ -185,7 +183,11 @@ const ArchivalLedgerPage = () => {
             </button>
             <div className="h-4 w-px bg-slate-200 mx-1"></div>
             <Logo size={40} />
+<<<<<<< Updated upstream
             <h1 className="text-base font-bold text-slate-900 tracking-tight ml-1 uppercase">Archival Ledger</h1>
+=======
+            <h1 className="text-base font-bold text-slate-900 tracking-tight ml-1">Archival Ledger</h1>
+>>>>>>> Stashed changes
           </div>
           
           <div className="flex items-center gap-2">
@@ -193,7 +195,7 @@ const ArchivalLedgerPage = () => {
             <div className="flex items-center gap-1.5">
               <div className="flex items-center gap-1.5 px-2 border-r border-slate-200">
                 <BookOpen size={14} className="text-slate-400" />
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap hidden sm:inline">Workbook</span>
+                <span className="text-[10px] font-black text-slate-400 tracking-widest whitespace-nowrap hidden sm:inline">Workbook</span>
               </div>
               <div className="relative">
                 <select 
@@ -448,7 +450,11 @@ const ArchivalLedgerPage = () => {
       </main>
       
       <footer className="mt-auto p-6 text-center text-xs font-black text-slate-300 uppercase tracking-[0.3em] border-t border-slate-100">
+<<<<<<< Updated upstream
         DriveSafe Vault &copy; 2026 &bull; Archival Ledger &bull; v2.6.0
+=======
+        DriveSafe Vault &copy; 2026 &bull; Secure Archival Ledger &bull; v2.6.0
+>>>>>>> Stashed changes
       </footer>
     </div>
   );

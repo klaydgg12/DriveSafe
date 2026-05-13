@@ -393,9 +393,13 @@ def get_ledger_workbooks():
     if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
     try:
         from models import ArchivalLedger, db
+        # Ensure we only get non-null, non-empty distinct names
         workbooks = db.session.query(ArchivalLedger.workbook_name).distinct().all()
-        return jsonify([w[0] for w in workbooks if w and w[0]])
-    except: return jsonify([])
+        clean_list = sorted([w[0] for w in workbooks if w and w[0] and str(w[0]).strip()])
+        return jsonify(clean_list)
+    except Exception as e:
+        logger.error(f"Workbook List Error: {e}")
+        return jsonify([])
 
 @registry_bp.route('/api/registry/ledger/tabs', methods=['GET'])
 @login_required

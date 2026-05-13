@@ -48,7 +48,7 @@ const BackupHistoryPage = () => {
             <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
                     <div>
-                        <h1 style={{ margin: 0, color: '#1e293b' }}>Audit Log</h1>
+                        <h1 style={{ margin: 0, color: '#1e293b' }}>Archival Ledger</h1>
                         <p style={{ color: '#64748b', marginTop: '5px' }}>Master record of all local archives and cryptographic hashes.</p>
                     </div>
                     <button onClick={() => window.location.hash = 'dashboard'} style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>

@@ -19,17 +19,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ArchivalEngine:
-    def __init__(self, service_account_json_path=None, archive_root='Capstone_Archives', user_credentials=None):
+    def __init__(self, user_credentials, archive_root='Capstone_Archives'):
         self.scope = ["https://www.googleapis.com/auth/drive"]
         
-        if user_credentials:
-            self.service = build('drive', 'v3', credentials=user_credentials)
-        elif service_account_json_path:
-            self.creds = ServiceAccountCredentials.from_json_keyfile_name(service_account_json_path, self.scope)
-            self.service = build('drive', 'v3', credentials=self.creds)
-        else:
-             raise ValueError("No authentication method provided for ArchivalEngine")
+        if not user_credentials:
+             raise ValueError("User credentials are required for ArchivalEngine")
              
+        self.service = build('drive', 'v3', credentials=user_credentials)
         self.archive_root = archive_root
 
     def _extract_file_id(self, url):
