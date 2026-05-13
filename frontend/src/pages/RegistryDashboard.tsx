@@ -168,6 +168,21 @@ const RegistryDashboard: React.FC = () => {
         }
     };
 
+    const handleReset = async (project: Project) => {
+        if (!window.confirm(`Are you sure you want to reset the status of "${project.project_title}" to Pending? This will clear its local file paths in the Registry.`)) return;
+        
+        setLoading(true);
+        try {
+            await axios.post(`/api/registry/reset`, { project, sheet_id: selectedWorkbookId }, { withCredentials: true });
+            setMessage({ text: "Status reset to Pending.", type: 'success' });
+            fetchProjects(selectedYear, selectedWorkbookId);
+        } catch {
+            setMessage({ text: "Reset failed.", type: 'error' });
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleSort = (field: SortField) => {
         if (sortField === field) {
             setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
@@ -443,8 +458,17 @@ const RegistryDashboard: React.FC = () => {
                                                 </div>
                                             </td>
                                             <td className="px-4 py-2 text-right pr-10">
-                                                <div className="flex items-center justify-end gap-2">
+                                                <div className="flex items-center justify-end gap-3 group/status">
                                                     {getStatusBadge(p.status)}
+                                                    {(p.status.toLowerCase() === 'archived' || p.status.toLowerCase() === 'failed') && (
+                                                        <button 
+                                                            onClick={(e) => { e.stopPropagation(); handleReset(p); }}
+                                                            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all opacity-0 group-hover/status:opacity-100"
+                                                            title="Reset Status to Pending"
+                                                        >
+                                                            <RotateCcw className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </td>
                                         </tr>
