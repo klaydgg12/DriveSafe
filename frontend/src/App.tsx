@@ -18,7 +18,9 @@ function App() {
   // Handle hash-based navigation
   useEffect(() => {
     const handleHashChange = () => {
-      const hash = window.location.hash.substring(1); // Remove #
+      // Normalize hash: remove #, remove leading/trailing slashes, convert to lowercase
+      const hash = window.location.hash.replace(/^#\/?|\/?$/g, "").toLowerCase();
+      
       if (hash === "features") {
         setCurrentPage("features");
       } else if (hash === "about") {
@@ -31,7 +33,7 @@ function App() {
         setCurrentPage("backup-history");
       } else if (hash === "registry-dashboard") {
         setCurrentPage("registry-dashboard");
-      } else {
+      } else if (!hash || hash === "") {
         setCurrentPage("home");
       }
     };
