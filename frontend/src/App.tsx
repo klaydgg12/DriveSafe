@@ -27,7 +27,7 @@ function App() {
         setCurrentPage("signin");
       } else if (hash === "dashboard") {
         setCurrentPage("dashboard");
-      } else if (hash === "backup-history") {
+      } else if (hash === "backup-history" || hash === "ledger") {
         setCurrentPage("backup-history");
       } else if (hash === "registry-dashboard") {
         setCurrentPage("registry-dashboard");
