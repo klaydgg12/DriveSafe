@@ -185,7 +185,7 @@ const ArchivalLedgerPage = () => {
             </button>
             <div className="h-4 w-px bg-slate-200 mx-1"></div>
             <Logo size={40} />
-            <h1 className="text-base font-bold text-slate-900 tracking-tight ml-1 uppercase">Audit Log</h1>
+            <h1 className="text-base font-bold text-slate-900 tracking-tight ml-1 uppercase">Archival Ledger</h1>
           </div>
           
           <div className="flex items-center gap-2">
@@ -201,7 +201,7 @@ const ArchivalLedgerPage = () => {
                   onChange={(e) => setSelectedWorkbook(e.target.value)}
                   className="appearance-none bg-white border border-transparent text-slate-900 text-[10px] font-black rounded-lg px-2 py-1.5 pr-8 focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[120px] max-w-[160px] truncate"
                 >
-                  <option value="">ALL WORKBOOKS</option>
+                  <option value="">All Workbooks</option>
                   {workbooks.map(w => <option key={w} value={w}>{w}</option>)}
                 </select>
                 <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
@@ -219,7 +219,7 @@ const ArchivalLedgerPage = () => {
                   onChange={(e) => setSelectedYear(e.target.value)}
                   className="appearance-none bg-white border border-transparent text-slate-900 text-[10px] font-black rounded-lg px-2 py-1.5 pr-8 focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[100px]"
                 >
-                  <option value="">ALL SHEETS</option>
+                  <option value="">All Sheets</option>
                   {years.map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
                 <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
@@ -448,7 +448,7 @@ const ArchivalLedgerPage = () => {
       </main>
       
       <footer className="mt-auto p-6 text-center text-xs font-black text-slate-300 uppercase tracking-[0.3em] border-t border-slate-100">
-        DriveSafe Vault &copy; 2026 &bull; Secure Audit Log &bull; v2.6.0
+        DriveSafe Vault &copy; 2026 &bull; Archival Ledger &bull; v2.6.0
       </footer>
     </div>
   );

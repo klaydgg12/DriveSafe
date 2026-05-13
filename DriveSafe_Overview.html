@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DriveSafe - Project Overview</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color: #f4f7f6;
+        }
+        .container {
+            background-color: #fff;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #2980b9;
+            margin-top: 30px;
+            border-left: 5px solid #3498db;
+            padding-left: 15px;
+        }
+        h3 {
+            color: #34495e;
+            margin-bottom: 5px;
+        }
+        ul {
+            padding-left: 20px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+        .tech-stack-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .code-block {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.9em;
+        }
+        .footer {
+            margin-top: 40px;
+            text-align: center;
+            font-size: 0.8em;
+            color: #7f8c8d;
+        }
+        @media print {
+            body { background-color: #fff; margin: 0; }
+            .container { box-shadow: none; border: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>DriveSafe - Intelligent Capstone Archival System</h1>
+    <p><strong>A specialized archival platform with AI-powered deduplication and a "Binary Vault" for permanent institutional records.</strong></p>
+
+    <h2>About</h2>
+    <p>This project is a capstone research that aims to revolutionize academic document preservation through an automated "Binary Vault" strategy. DriveSafe streamlines the transition of capstone projects from student cloud storage to a standardized, teacher-verified institutional repository. The system solves the issue of "link rot" by extracting raw bytes from Google Drive and storing them securely in a centralized database, complemented by TF-IDF semantic analysis for plagiarism detection and version control.</p>
+
+    <h2>Team</h2>
+    <ul>
+        <li><strong>John Earl F. Mandawe</strong></li>
+        <li><strong>Clyde Nixon Jumawan</strong></li>
+        <li><strong>Mark Joenylle B. Cortes</strong></li>
+        <li><strong>Lyrech James E. Laspiñas</strong></li>
+        <li><strong>Louis Drey Castañeto</strong></li>
+    </ul>
+
+    <h2>Tech Stack</h2>
+    <div class="tech-stack-grid">
+        <div>
+            <h3>Frontend</h3>
+            <ul>
+                <li><strong>React:</strong> ^19.2.0</li>
+                <li><strong>Vite:</strong> ^7.2.4</li>
+                <li><strong>Tailwind CSS:</strong> ^4.2.4</li>
+                <li><strong>React OAuth Google:</strong> ^0.12.2</li>
+                <li><strong>Axios:</strong> ^1.15.0</li>
+                <li><strong>Node.js:</strong> 18.x or higher</li>
+            </ul>
+        </div>
+        <div>
+            <h3>Backend</h3>
+            <ul>
+                <li><strong>Python:</strong> 3.11+</li>
+                <li><strong>Flask:</strong> 3.x</li>
+                <li><strong>Flask-SQLAlchemy:</strong> (MariaDB)</li>
+                <li><strong>Scikit-learn:</strong> (TF-IDF Analysis)</li>
+                <li><strong>PDFPlumber:</strong> (Text Extraction)</li>
+                <li><strong>Gspread:</strong> (Google Sheets Integration)</li>
+            </ul>
+        </div>
+    </div>
+
+    <h2>Services</h2>
+    <ul>
+        <li><strong>MariaDB:</strong> The "Binary Vault" (LONGBLOB storage)</li>
+        <li><strong>Google Drive API v3:</strong> Secure deliverable extraction</li>
+        <li><strong>Google Sheets API v4:</strong> Registry Pipeline integration</li>
+        <li><strong>Google OAuth 2.0:</strong> Institutional authentication (@cit.edu)</li>
+    </ul>
+
+    <h2>Deployment (Hostinger VPS)</h2>
+    <p>The system is hosted on a <strong>Hostinger KVM 1 VPS</strong> running Ubuntu. Both the React frontend and Flask backend are served from the same infrastructure using a custom domain ([https://archival-drivesafe.online/](https://archival-drivesafe.online/)).</p>
+    
+    <h3>Setup Process</h3>
+    <ol>
+        <li><strong>Server Configuration:</strong> Ubuntu 22.04 LTS with Docker and Nginx.</li>
+        <li><strong>Frontend Build:</strong> The React app is compiled via <code>npm run build</code> and served as static files.</li>
+        <li><strong>Backend Engine:</strong> The Flask API handles requests, communicates with MariaDB, and manages Google API streams.</li>
+        <li><strong>Domain & SSL:</strong> Configured via Hostinger's DNS with Let's Encrypt SSL/TLS for secure HTTPS access.</li>
+    </ol>
+
+    <h2>System Access</h2>
+    <p><strong>Note:</strong> Access is strictly restricted to Faculty and Registrars. Authentication is handled via Google OAuth 2.0. New accounts are managed through the institutional database to ensure only authorized personnel can access the Archival Ledger and Registry Pipeline.</p>
+    <ul>
+        <li><strong>Authorized Access:</strong> Use your institutional Google Account (@cit.edu).</li>
+        <li><strong>Database Management:</strong> Teacher roles are assigned directly in the MariaDB <code>users</code> table.</li>
+    </ul>
+
+    <div class="footer">
+        &copy; 2025 CEBU INSTITUTE OF TECHNOLOGY UNIVERSITY - College of Computer Studies
+    </div>
+</div>
+
+</body>
+</html>
