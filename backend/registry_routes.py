@@ -5,6 +5,7 @@ import requests
 import threading
 import logging
 import datetime
+import traceback
 from registry_sheets import RegistrySheetsService
 from archival_engine import ArchivalEngine
 from models import db
@@ -31,7 +32,7 @@ def get_user_creds():
             "https://www.googleapis.com/auth/spreadsheets"
         ])
     except Exception as e:
-        logger.error(f"DEBUG: Failed to create credentials: {e}", exc_info=True)
+        logger.error(f"DEBUG: Failed to create credentials: {e}")
         return None
 
 def get_services(requested_sheet_id=None, provided_user_creds=None):
@@ -58,6 +59,7 @@ def get_services(requested_sheet_id=None, provided_user_creds=None):
     logger.info(f"DEBUG: Service Account Path Present: {service_account_path is not None}")
 
     try:
+        # Use user creds if available, else fallback to service account if it exists
         sheets_service = RegistrySheetsService(
             user_credentials=user_creds,
             service_account_json_path=service_account_path if not user_creds else None,
@@ -96,14 +98,15 @@ def list_sheets():
     except Exception as e:
         logger.error(f"DEBUG: List sheets route error: {str(e)}", exc_info=True)
         error_detail = str(e)
-        
-        # Enhanced diagnostic for Drive API
         if "invalid_grant" in error_detail.lower():
             error_detail = "Your Google session has expired. Please log out and sign in again."
         elif "Drive API" in error_detail or "403" in error_detail:
-            error_detail = "Google Drive API is either not enabled or permissions are missing. Enable 'Google Drive API' in Google Cloud Console."
+            error_detail = "Google Drive API is either not enabled or permissions are missing."
             
-        return jsonify({"error": error_detail, "traceback": traceback.format_exc()}), 500
+        return jsonify({
+            "error": error_detail, 
+            "traceback": traceback.format_exc()
+        }), 500
 
 @registry_bp.route('/api/registry/years', methods=['GET'])
 @login_required
@@ -121,7 +124,7 @@ def get_years():
         return jsonify(years)
     except Exception as e:
         logger.error(f"DEBUG: get_years error: {str(e)}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 @registry_bp.route('/api/registry/projects', methods=['GET'])
 @login_required
@@ -139,13 +142,11 @@ def get_pending():
         sheets_service, _ = get_services(requested_sheet_id=sheet_id)
         projects = sheets_service.get_all_projects(year)
         
-        # Merge with LIVE_STATUS_TRACKER for real-time feel
         for p in projects:
             tracker_key = f"{sheet_id}_{year}_{p['row_index']}"
             if tracker_key in LIVE_STATUS_TRACKER:
                 p['status'] = LIVE_STATUS_TRACKER[tracker_key]
 
-            # Add latest version info from DB
             last_record = ArchivalLedger.query.filter_by(
                 project_id=p['project_id'],
                 academic_year=year,
@@ -155,8 +156,21 @@ def get_pending():
             
         return jsonify(projects)
     except Exception as e:
-        logger.error(f"Failed to fetch projects: {e}")
-        return jsonify({"error": "Google Sheets is currently busy."}), 503
+        logger.error(f"Failed to fetch projects: {e}", exc_info=True)
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+@registry_bp.route('/api/registry/ledger/workbooks', methods=['GET'])
+@login_required
+def get_ledger_workbooks():
+    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
+    try:
+        from models import ArchivalLedger, db
+        workbooks = db.session.query(ArchivalLedger.workbook_name).distinct().all()
+        clean_list = sorted(list(set([str(w[0]).strip() for w in workbooks if w and w[0] and str(w[0]).strip()])))
+        return jsonify(clean_list)
+    except Exception as e:
+        logger.error(f"DEBUG: get_ledger_workbooks error: {str(e)}", exc_info=True)
+        return jsonify([])
 
 @registry_bp.route('/api/registry/validate', methods=['POST'])
 @login_required
@@ -164,31 +178,25 @@ def validate_links():
     if current_user.role != 'teacher':
         return jsonify({"error": "Unauthorized"}), 403
     
-    links = list(set(request.json.get('links', [])))  # Use set to avoid redundant checks
+    links = list(set(request.json.get('links', [])))
     results = {}
     
     from concurrent.futures import ThreadPoolExecutor
 
     def check_link(link):
-        if not link:
-            return link, "Empty"
+        if not link: return link, "Empty"
         try:
-            # Use stream=True and only check headers to be faster
             resp = requests.head(link, timeout=3, allow_redirects=True)
-            # Google Drive links might return 200 for the login page even if restricted, 
-            # but usually 200/302 means it exists.
             status = "Accessible" if resp.status_code in [200, 301, 302] else f"Error {resp.status_code}"
             return link, status
-        except Exception:
+        except:
             try:
-                # Fallback to GET if HEAD is blocked
                 resp = requests.get(link, timeout=3, stream=True)
                 status = "Accessible" if resp.status_code == 200 else "Failed"
                 return link, status
             except:
                 return link, "Failed"
 
-    # Use up to 20 threads for fast parallel checking
     with ThreadPoolExecutor(max_workers=20) as executor:
         future_to_link = {executor.submit(check_link, link): link for link in links}
         for future in future_to_link:
@@ -219,9 +227,6 @@ def archive_selected():
     
     def process_task(app_context, project_list, creds, sid, wb_name):
         from concurrent.futures import ThreadPoolExecutor
-        
-        # 1. INITIAL BATCH UPDATE: Set all to 'Processing' in one or two calls
-        # Filter projects that aren't already processing
         to_process = []
         for p in project_list:
             tracker_key = f"{sid}_{p['academic_year']}_{p['row_index']}"
@@ -229,20 +234,15 @@ def archive_selected():
                 to_process.append(p)
                 LIVE_STATUS_TRACKER[tracker_key] = "Processing"
         
-        if not to_process:
-            return
+        if not to_process: return
 
-        # Batch update Sheets to 'Processing'
         with app_context.app_context():
             try:
                 sheets_service, _ = get_services(requested_sheet_id=sid, provided_user_creds=creds)
                 from collections import defaultdict
                 init_updates = defaultdict(list)
                 for p in to_process:
-                    init_updates[p['academic_year']].append({
-                        'row_index': p['row_index'],
-                        'status': 'Processing'
-                    })
+                    init_updates[p['academic_year']].append({'row_index': p['row_index'], 'status': 'Processing'})
                 for s_name, upds in init_updates.items():
                     sheets_service.batch_update_statuses(s_name, upds)
             except Exception as e:
@@ -250,58 +250,38 @@ def archive_selected():
             finally:
                 db.session.remove()
 
-        # 2. PARALLEL ARCHIVAL: Limit concurrency to 8 to protect Drive API quota
         with ThreadPoolExecutor(max_workers=8) as executor:
             def process_single_project(p):
                 tracker_key = f"{sid}_{p['academic_year']}_{p['row_index']}"
                 with app_context.app_context():
                     try:
-                        # Small random sleep to spread out requests
                         import time, random
                         time.sleep(random.uniform(0.1, 2.0))
-
                         _, engine = get_services(requested_sheet_id=sid, provided_user_creds=creds)
                         result = engine.archive_project(p, workbook_name=wb_name)
-                        
                         status = result['status'].capitalize()
                         if result['status'] == 'unchanged': status = 'Archived'
-                        
                         LIVE_STATUS_TRACKER[tracker_key] = status
                         paths = result.get('paths', {})
-                        
                         return {
-                            'sheet_name': p['academic_year'],
-                            'row_index': p['row_index'],
-                            'status': status,
+                            'sheet_name': p['academic_year'], 'row_index': p['row_index'], 'status': status,
                             'kwargs': {
-                                'srs_path': paths.get('srs'),
-                                'sdd_path': paths.get('sdd'),
-                                'spmp_path': paths.get('spmp'),
-                                'std_path': paths.get('std'),
-                                'ri_path': paths.get('ri'),
-                                'error_msg': result.get('error')
+                                'srs_path': paths.get('srs'), 'sdd_path': paths.get('sdd'), 'spmp_path': paths.get('spmp'),
+                                'std_path': paths.get('std'), 'ri_path': paths.get('ri'), 'error_msg': result.get('error')
                             }
                         }
                     except Exception as e:
                         logger.error(f"Failed to process {p.get('project_title')}: {e}")
                         LIVE_STATUS_TRACKER[tracker_key] = "Failed"
-                        return {
-                            'sheet_name': p['academic_year'],
-                            'row_index': p['row_index'],
-                            'status': 'Failed',
-                            'kwargs': {'error_msg': str(e)}
-                        }
+                        return { 'sheet_name': p['academic_year'], 'row_index': p['row_index'], 'status': 'Failed', 'kwargs': {'error_msg': str(e)} }
                     finally:
                         db.session.remove()
 
             results = list(executor.map(process_single_project, to_process))
-            
-            # 3. FINAL BATCH UPDATE: Save all results
             from collections import defaultdict
             final_updates = defaultdict(list)
             for res in results:
-                if res:
-                    final_updates[res['sheet_name']].append(res)
+                if res: final_updates[res['sheet_name']].append(res)
             
             if final_updates:
                 with app_context.app_context():
@@ -370,7 +350,7 @@ def reset_project_status():
             srs_path='', sdd_path='', spmp_path='', std_path='', ri_path='', error_msg=''
         )
         return jsonify({"message": "Reset successful"})
-    except Exception as e: return jsonify({"error": str(e)}), 500
+    except Exception as e: return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 @registry_bp.route('/api/registry/ledger/grouped', methods=['GET'])
 @login_required
@@ -422,22 +402,7 @@ def get_grouped_ledger():
             for doc_type in project["documents"]: project["documents"][doc_type].reverse()
         return jsonify(result)
     except Exception as e:
-        logger.error(f"Ledger Group Error: {e}")
-        return jsonify([])
-
-@registry_bp.route('/api/registry/ledger/workbooks', methods=['GET'])
-@login_required
-def get_ledger_workbooks():
-    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
-    try:
-        from models import ArchivalLedger, db
-        # Wrapping query in list/set for cleaner processing and thread safety
-        workbooks = db.session.query(ArchivalLedger.workbook_name).distinct().all()
-        clean_list = sorted(list(set([str(w[0]).strip() for w in workbooks if w and w[0] and str(w[0]).strip()])))
-        return jsonify(clean_list)
-    except Exception as e:
-        logger.error(f"DEBUG: get_ledger_workbooks error: {str(e)}", exc_info=True)
-        # Return empty list to prevent frontend crash
+        logger.error(f"Ledger Group Error: {e}", exc_info=True)
         return jsonify([])
 
 @registry_bp.route('/api/registry/ledger/tabs', methods=['GET'])
@@ -456,49 +421,29 @@ def get_ledger_tabs():
 @registry_bp.route('/api/registry/ledger', methods=['GET'])
 @login_required
 def get_ledger():
-    if current_user.role != 'teacher':
-        return jsonify({"error": "Unauthorized"}), 403
-    
+    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
     from models import ArchivalLedger
     from sqlalchemy.orm import defer
-    
-    # We use defer() to skip the heavy binary columns during listing. 
-    # This makes the API much faster.
     records = ArchivalLedger.query.options(
-        defer(ArchivalLedger.srs_binary), 
-        defer(ArchivalLedger.sdd_binary),
-        defer(ArchivalLedger.spmp_binary),
-        defer(ArchivalLedger.std_binary),
-        defer(ArchivalLedger.ri_binary),
-        defer(ArchivalLedger.srs_text),
-        defer(ArchivalLedger.sdd_text),
-        defer(ArchivalLedger.spmp_text),
-        defer(ArchivalLedger.std_text),
+        defer(ArchivalLedger.srs_binary), defer(ArchivalLedger.sdd_binary), defer(ArchivalLedger.spmp_binary),
+        defer(ArchivalLedger.std_binary), defer(ArchivalLedger.ri_binary), defer(ArchivalLedger.srs_text),
+        defer(ArchivalLedger.sdd_text), defer(ArchivalLedger.spmp_text), defer(ArchivalLedger.std_text),
         defer(ArchivalLedger.ri_text)
     ).order_by(ArchivalLedger.id.desc()).all()
-    
     return jsonify([{
-        "id": r.id,
-        "project_id": r.project_id,
-        "project_title": r.project_title,
-        "academic_year": r.academic_year,
-        "workbook_name": r.workbook_name,
-        "status": r.status,
-        "version": r.version,
+        "id": r.id, "project_id": r.project_id, "project_title": r.project_title,
+        "academic_year": r.academic_year, "workbook_name": r.workbook_name,
+        "status": r.status, "version": r.version,
         "archived_at": r.archived_at.strftime("%Y-%m-%d %H:%M:%S") if r.archived_at else None
     } for r in records])
 
 @registry_bp.route('/api/registry/ledger/<int:ledger_id>', methods=['DELETE'])
 @login_required
 def delete_ledger_record(ledger_id):
-    if current_user.role != 'teacher':
-        return jsonify({"error": "Unauthorized"}), 403
-    
+    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
     from models import ArchivalLedger
     record = ArchivalLedger.query.get_or_404(ledger_id)
-    
     try:
-        # Delete from Database first to ensure it's removed even if disk cleanup fails
         db.session.delete(record)
         db.session.commit()
         return jsonify({"message": "Successfully removed record"}), 200
@@ -510,16 +455,9 @@ def delete_ledger_record(ledger_id):
 @registry_bp.route('/api/registry/stats', methods=['GET'])
 @login_required
 def get_stats():
-    if current_user.role != 'teacher':
-        return jsonify({"error": "Unauthorized"}), 403
-    
+    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
     from models import ArchivalLedger
-    import os
-    
-    # 1. Total Archived Count (unique projects)
     archived_count = db.session.query(ArchivalLedger.project_id).distinct().count()
-    
-    # 2. Pending Count (from first available year of default sheet)
     pending_count = 0
     service_account_ok = False
     try:
@@ -529,12 +467,9 @@ def get_stats():
             all_projects = sheets_service.get_all_projects(years[0])
             pending_count = len([p for p in all_projects if p['status'].lower() == 'pending'])
         service_account_ok = True
-    except Exception as e:
-        logger.error(f"Stats Error: {e}")
-
+    except: pass
     return jsonify({
-        "archived_count": archived_count,
-        "pending_count": pending_count,
+        "archived_count": archived_count, "pending_count": pending_count,
         "service_account_configured": service_account_ok and os.path.exists(os.getenv('SERVICE_ACCOUNT_JSON', '')),
         "last_sync": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
