@@ -33,12 +33,10 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # --- DATABASE CONFIGURATION ---
 def get_robust_database_uri():
-    # Priority 1: Use DATABASE_URL from environment
     env_url = os.getenv('DATABASE_URL')
     if env_url:
         raw_url = env_url.strip().strip("'").strip('"')
     else:
-        # Fallback for local dev
         raw_url = 'mysql+pymysql://root:123Earl.@localhost/drivesafe_prod'
     
     db_url = raw_url
@@ -101,14 +99,12 @@ def debug_status():
     except Exception as e:
         logger.error(f"DEBUG DB ERROR: {e}")
 
-    # Test Google API Connectivity
     drive_api_ok = "Not Tested"
     try:
         from registry_sheets import RegistrySheetsService
         sa_json = os.getenv('SERVICE_ACCOUNT_JSON')
         if sa_json:
             svc = RegistrySheetsService(service_account_json_path=sa_json)
-            # Try to list files as a test
             svc.client.list_spreadsheet_files()
             drive_api_ok = "Service Account Connection Successful"
         else:
