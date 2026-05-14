@@ -95,11 +95,15 @@ def list_sheets():
         return jsonify(sheets)
     except Exception as e:
         logger.error(f"DEBUG: List sheets route error: {str(e)}", exc_info=True)
-        # Return a more descriptive error if it's a known Google error
         error_detail = str(e)
+        
+        # Enhanced diagnostic for Drive API
         if "invalid_grant" in error_detail.lower():
             error_detail = "Your Google session has expired. Please log out and sign in again."
-        return jsonify({"error": error_detail}), 500
+        elif "Drive API" in error_detail or "403" in error_detail:
+            error_detail = "Google Drive API is either not enabled or permissions are missing. Enable 'Google Drive API' in Google Cloud Console."
+            
+        return jsonify({"error": error_detail, "traceback": traceback.format_exc()}), 500
 
 @registry_bp.route('/api/registry/years', methods=['GET'])
 @login_required

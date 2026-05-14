@@ -24,21 +24,17 @@ logger = logging.getLogger(__name__)
 
 from models import db, User, ArchivalLedger
 
-app = Flask(__name__, 
-            static_folder='../frontend/dist',
-            static_url_path='/')
+app = Flask(__name__, static_folder='../frontend/dist')
 
 # Handle proxies (Railway, Render, etc.)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # --- DATABASE CONFIGURATION ---
 def get_robust_database_uri():
-    # Priority 1: Use DATABASE_URL from environment
     env_url = os.getenv('DATABASE_URL')
     if env_url:
         raw_url = env_url.strip().strip("'").strip('"')
     else:
-        # Fallback for local dev
         raw_url = 'mysql+pymysql://root:123Earl.@localhost/drivesafe_prod'
     
     db_url = raw_url
@@ -62,7 +58,6 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 }
 
 # --- ENVIRONMENT & SESSION CONFIG ---
-# Detect production based on common env vars or if it's running behind a secure proxy
 is_prod = (
     os.getenv('FLASK_ENV') == 'production' or 
     os.getenv('NODE_ENV') == 'production' or 
@@ -95,53 +90,6 @@ def unauthorized():
 # Register Registry Blueprint
 from registry_routes import registry_bp
 app.register_blueprint(registry_bp)
-
-# --- SYSTEM ROUTES ---
-@app.route('/api/debug-status', methods=['GET'])
-def debug_status():
-    db_ok = False
-    try:
-        db.session.execute(db.text('SELECT 1'))
-        db_ok = True
-    except Exception as e:
-        logger.error(f"DEBUG DB ERROR: {e}")
-
-    # Test Google API Connectivity
-    drive_api_ok = "Not Tested"
-    try:
-        from registry_sheets import RegistrySheetsService
-        sa_json = os.getenv('SERVICE_ACCOUNT_JSON')
-        if sa_json:
-            svc = RegistrySheetsService(service_account_json_path=sa_json)
-            # Try to list files as a test
-            svc.client.list_spreadsheet_files()
-            drive_api_ok = "Service Account Connection Successful"
-        else:
-            drive_api_ok = "SERVICE_ACCOUNT_JSON env var missing"
-    except Exception as e:
-        drive_api_ok = f"API Error: {str(e)}"
-
-    return jsonify({
-        "status": "online",
-        "is_production": is_prod,
-        "database": "connected" if db_ok else "failed",
-        "google_drive_api": drive_api_ok,
-        "session_keys": list(session.keys()),
-        "user_authenticated": current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else False,
-        "env_vars": {
-            "SHEET_ID": os.getenv('SHEET_ID') is not None,
-            "SERVICE_ACCOUNT": os.getenv('SERVICE_ACCOUNT_JSON') is not None,
-            "CLIENT_SECRET": os.getenv('GOOGLE_CLIENT_SECRET_JSON') is not None
-        }
-    })
-
-# --- FRONTEND ROUTES ---
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve(path):
-    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
-        return send_from_directory(app.static_folder, path)
-    return send_from_directory(app.static_folder, 'index.html')
 
 # --- AUTH ROUTES ---
 @app.route('/auth/google', methods=['POST'])
@@ -182,10 +130,15 @@ def google_auth():
         flow.fetch_token(code=code)
         service = build('oauth2', 'v2', credentials=flow.credentials)
         user_info = service.userinfo().get().execute()
+        email = user_info['email']
+
+        # --- RESTRICT TO INSTITUTIONAL DOMAIN ---
+        if not email.endswith('@cit.edu'):
+            return jsonify({"error": "Unauthorized. Please use your institutional (@cit.edu) account."}), 403
         
-        user = User.query.filter_by(email=user_info['email']).first()
+        user = User.query.filter_by(email=email).first()
         if not user:
-            user = User(email=user_info['email'], name=user_info['name'], role='teacher')
+            user = User(email=email, name=user_info['name'], role='teacher')
             db.session.add(user)
             db.session.commit()
             
@@ -215,6 +168,14 @@ def get_user_info():
 def logout():
     logout_user()
     return jsonify({"message": "Logged out"}), 200
+
+# --- FRONTEND CATCH-ALL (MUST BE AT THE BOTTOM) ---
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve(path):
+    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    return send_from_directory(app.static_folder, 'index.html')
 
 from werkzeug.exceptions import HTTPException
 
