@@ -47,6 +47,10 @@ const ArchivalLedgerPage = () => {
   const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
 
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const projectsPerPage = 10; // Adjusted for card-based layout
+
   useEffect(() => { fetchWorkbooks(); }, []);
   useEffect(() => { fetchYears(selectedWorkbook); }, [selectedWorkbook]);
   useEffect(() => { fetchLedger(); }, [selectedYear, selectedWorkbook, statusFilter]);
@@ -55,13 +59,14 @@ const ArchivalLedgerPage = () => {
     try {
       const resp = await axios.get(`/api/registry/ledger/workbooks`, { withCredentials: true });
       setWorkbooks(resp.data);
-      setSelectedWorkbook(""); 
+      // Don't auto-reset selectedWorkbook here to avoid selection loss
     } catch (err) { console.error("Failed to fetch workbooks:", err); }
   };
 
   const fetchYears = async (workbook: string) => {
     try {
-      const url = workbook ? `/api/registry/ledger/tabs?workbook=${workbook}` : `/api/registry/ledger/tabs`;
+      // Critical fix for deployed: Use workbook name if selected
+      const url = workbook ? `/api/registry/ledger/tabs?workbook=${encodeURIComponent(workbook)}` : `/api/registry/ledger/tabs`;
       const resp = await axios.get(url, { withCredentials: true });
       setYears(resp.data);
       setSelectedYear(""); 
@@ -86,6 +91,7 @@ const ArchivalLedgerPage = () => {
       });
 
       setProjects(projectsWithStatus);
+      setCurrentPage(1);
     } catch (err) { console.error("Failed to fetch ledger:", err); }
     finally { setLoading(false); }
   };
@@ -150,86 +156,80 @@ const ArchivalLedgerPage = () => {
         return matchesSearch && matchesStatus;
       })
       .sort((a, b) => {
-        // Natural sort by ID
         return a.project_id.localeCompare(b.project_id, undefined, { numeric: true, sensitivity: 'base' });
       });
   }, [projects, searchQuery, statusFilter]);
 
-  // Group by Academic Year
-  const groupedByYear = useMemo(() => {
-    const groups: Record<string, ProjectGroup[]> = {};
-    filteredAndSortedProjects.forEach(p => {
-      if (!groups[p.academic_year]) groups[p.academic_year] = [];
-      groups[p.academic_year].push(p);
-    });
-    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0])); // Sort years descending
-  }, [filteredAndSortedProjects]);
+  // Pagination Logic
+  const totalPages = Math.ceil(filteredAndSortedProjects.length / projectsPerPage);
+  const paginatedProjects = useMemo(() => {
+    const startIndex = (currentPage - 1) * projectsPerPage;
+    return filteredAndSortedProjects.slice(startIndex, startIndex + projectsPerPage);
+  }, [filteredAndSortedProjects, currentPage]);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans transition-colors duration-300">
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans transition-colors duration-300 overflow-x-hidden">
       {/* Header */}
       <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 transition-colors shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 shrink-0">
             <button onClick={() => window.location.hash = "dashboard"} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-slate-50 rounded-xl transition-all">
               <ArrowLeft size={20} />
             </button>
-            <div className="h-6 w-px bg-slate-100 mx-1"></div>
+            <div className="h-6 w-px bg-slate-100 mx-1 hidden sm:block"></div>
             <Logo size={40} />
-            <h1 className="text-xl font-black text-slate-900 tracking-tight ml-1">Archival Ledger</h1>
+            <h1 className="text-xl font-black text-slate-900 tracking-tight ml-1 hidden md:block">Archival Ledger</h1>
           </div>
           
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl border border-slate-200 mr-2">
-              <div className="flex items-center gap-1.5">
-                <div className="flex items-center gap-1.5 px-3 border-r border-slate-200">
-                  <BookOpen size={14} className="text-slate-400" />
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap hidden sm:inline">Workbook</span>
-                </div>
-                <div className="relative">
-                  <select 
-                    value={selectedWorkbook} 
-                    onChange={(e) => setSelectedWorkbook(e.target.value)}
-                    className="appearance-none bg-white border border-transparent text-slate-900 text-[11px] font-black rounded-lg px-3 py-1.5 pr-8 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[140px] max-w-[200px] truncate"
-                  >
-                    <option value="">All Workbooks</option>
-                    {workbooks.map(w => <option key={w} value={w}>{w}</option>)}
-                  </select>
-                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
-                </div>
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-2">
+            <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl border border-slate-200 shrink-0">
+              <div className="flex items-center gap-1.5 px-2 border-r border-slate-200 shrink-0">
+                <BookOpen size={14} className="text-slate-400" />
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest hidden lg:inline">Workbook</span>
               </div>
-              
-              <div className="flex items-center gap-1.5">
-                <div className="flex items-center gap-1.5 px-3 border-r border-slate-200">
-                  <Filter size={14} className="text-slate-400" />
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap hidden sm:inline">Sheet</span>
-                </div>
-                <div className="relative">
-                  <select 
-                    value={selectedYear} 
-                    onChange={(e) => setSelectedYear(e.target.value)}
-                    className="appearance-none bg-white border border-transparent text-slate-900 text-[11px] font-black rounded-lg px-3 py-1.5 pr-8 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm min-w-[120px]"
-                  >
-                    <option value="">All Sheets</option>
-                    {years.map(y => <option key={y} value={y}>{y}</option>)}
-                  </select>
-                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
-                </div>
+              <div className="relative shrink-0">
+                <select 
+                  value={selectedWorkbook} 
+                  onChange={(e) => setSelectedWorkbook(e.target.value)}
+                  className="appearance-none bg-white border border-transparent text-slate-900 text-[11px] font-black rounded-lg px-2 py-1.5 pr-8 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm w-[120px] md:w-[180px] truncate"
+                >
+                  <option value="">All Workbooks</option>
+                  {workbooks.map(w => <option key={w} value={w}>{w}</option>)}
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
+              </div>
+
+              <div className="w-px h-4 bg-slate-200 mx-1"></div>
+
+              <div className="flex items-center gap-1.5 px-2 border-r border-slate-200 shrink-0">
+                <Filter size={14} className="text-slate-400" />
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest hidden lg:inline">Sheet</span>
+              </div>
+              <div className="relative shrink-0">
+                <select 
+                  value={selectedYear} 
+                  onChange={(e) => setSelectedYear(e.target.value)}
+                  className="appearance-none bg-white border border-transparent text-slate-900 text-[11px] font-black rounded-lg px-2 py-1.5 pr-8 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all cursor-pointer shadow-sm w-[80px] md:w-[120px] truncate"
+                >
+                  <option value="">All Sheets</option>
+                  {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
               </div>
             </div>
             
             <button 
               onClick={fetchLedger}
-              className="p-2.5 bg-white border border-slate-200 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all shadow-sm"
+              className="p-2.5 bg-white border border-slate-200 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all shadow-sm shrink-0"
               title="Refresh Ledger"
             >
-              <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
+              <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
             </button>
           </div>
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto w-full p-6 flex-1 space-y-6">
+      <main className="max-w-7xl mx-auto w-full p-4 md:p-6 flex-1 space-y-6">
         {/* Controls Bar */}
         <div className="flex flex-col md:flex-row gap-4">
           <div className="relative group flex-1">
@@ -239,16 +239,16 @@ const ArchivalLedgerPage = () => {
               placeholder="Search archives by project name or ID..."
               className="w-full pl-11 pr-4 py-3 bg-white border border-slate-200 rounded-[1.25rem] shadow-sm focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none text-sm font-medium transition-all"
               value={searchQuery}
-              onChange={(e) => {setSearchQuery(e.target.value);}}
+              onChange={(e) => {setSearchQuery(e.target.value); setCurrentPage(1);}}
             />
           </div>
           
-          <div className="flex items-center gap-1 bg-white p-1 rounded-2xl border border-slate-100 shadow-sm shrink-0">
+          <div className="flex items-center gap-1 bg-white p-1 rounded-2xl border border-slate-100 shadow-sm shrink-0 overflow-x-auto no-scrollbar">
             {(['All', 'Archived', 'Failed'] as string[]).map(status => (
                 <button
                     key={status}
-                    onClick={() => {setStatusFilter(status);}}
-                    className={`px-4 py-2 text-[10px] font-black rounded-xl transition-all ${statusFilter === status ? 'bg-teal-600 text-white shadow-md shadow-teal-100' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+                    onClick={() => {setStatusFilter(status); setCurrentPage(1);}}
+                    className={`px-4 py-2 text-[10px] font-black rounded-xl transition-all whitespace-nowrap ${statusFilter === status ? 'bg-teal-600 text-white shadow-md shadow-teal-100' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
                 >
                     {status.toUpperCase()}
                 </button>
@@ -259,9 +259,9 @@ const ArchivalLedgerPage = () => {
         {loading ? (
           <div className="py-32 flex flex-col items-center gap-4">
             <RefreshCw className="w-12 h-12 text-teal-600 animate-spin" />
-            <p className="text-slate-400 font-black uppercase tracking-[0.3em] text-[10px]">Accessing Binary Vault...</p>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Accessing Binary Vault...</p>
           </div>
-        ) : groupedByYear.length === 0 ? (
+        ) : paginatedProjects.length === 0 ? (
           <div className="py-32 text-center">
             <div className="w-24 h-24 bg-slate-50 rounded-[2.5rem] flex items-center justify-center mx-auto mb-6 text-slate-200 border border-slate-100 shadow-inner">
               <FileSearch size={40} />
@@ -270,178 +270,195 @@ const ArchivalLedgerPage = () => {
             <p className="text-slate-400 text-sm font-medium mt-1">Try clearing your filters or search query.</p>
           </div>
         ) : (
-          <div className="space-y-12 pb-20">
-            {groupedByYear.map(([year, yearProjects]) => (
-              <section key={year} className="space-y-4">
-                <div className="flex items-center gap-4 px-2">
-                  <div className="w-12 h-px bg-slate-200"></div>
-                  <h2 className="text-xs font-black text-slate-400 uppercase tracking-[0.4em] whitespace-nowrap">{year} DELIVERABLES</h2>
-                  <div className="flex-1 h-px bg-slate-200"></div>
-                  <span className="px-3 py-1 bg-white border border-slate-200 rounded-full text-[10px] font-black text-slate-400">{yearProjects.length} PROJECTS</span>
-                </div>
-                
-                <div className="grid grid-cols-1 gap-4">
-                  {yearProjects.map((project) => {
-                    const pKey = `${project.project_id}-${project.project_title}`;
-                    const isExpanded = expandedProjects.has(pKey);
-                    const totalVersions = Object.values(project.documents).flat().length;
+          <div className="space-y-6 pb-20">
+            <div className="grid grid-cols-1 gap-4">
+              {paginatedProjects.map((project) => {
+                const pKey = `${project.project_id}-${project.project_title}`;
+                const isExpanded = expandedProjects.has(pKey);
+                const totalVersions = Object.values(project.documents).flat().length;
 
-                    return (
-                      <div key={pKey} className={`bg-white border transition-all duration-300 ${isExpanded ? 'border-indigo-200 shadow-xl ring-1 ring-indigo-50/50 rounded-[2rem]' : 'border-slate-100 hover:border-indigo-200 hover:shadow-md rounded-[1.5rem]'}`}>
-                        {/* Project Header */}
-                        <div 
-                          onClick={() => toggleProject(pKey)} 
-                          className="p-4 flex items-center justify-between cursor-pointer group select-none"
-                        >
-                          <div className="flex items-center gap-4 min-w-0">
-                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-500 ${isExpanded ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-50 text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600'}`}>
-                              <Folder size={22} fill={isExpanded ? "currentColor" : "none"} />
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                 <h3 className="text-sm font-black text-slate-900 truncate group-hover:text-indigo-600 transition-colors tracking-tight">{project.project_title}</h3>
-                                 <span className={`px-2 py-0.5 rounded-full text-[9px] font-black border uppercase tracking-widest ${getStatusStyles(project.status)}`}>
-                                   {project.status}
-                                 </span>
-                              </div>
-                              <div className="flex items-center gap-4 mt-1 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                <span className="font-mono text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded-md border border-slate-100">#{project.project_id}</span>
-                                <span className="flex items-center text-teal-600/70"><Layers size={11} className="mr-1.5" /> {totalVersions} ARCHIVES</span>
-                                <span className="flex items-center opacity-60"><BookOpen size={11} className="mr-1.5" /> {project.workbook_name || 'Legacy Archive'}</span>
-                              </div>
-                            </div>
+                return (
+                  <div key={pKey} className={`bg-white border transition-all duration-300 ${isExpanded ? 'border-indigo-200 shadow-xl ring-1 ring-indigo-50/50 rounded-[2.5rem]' : 'border-slate-100 hover:border-indigo-200 hover:shadow-md rounded-[2rem]'}`}>
+                    {/* Project Header */}
+                    <div 
+                      onClick={() => toggleProject(pKey)} 
+                      className="p-5 flex items-center justify-between cursor-pointer group select-none"
+                    >
+                      <div className="flex items-center gap-4 min-w-0">
+                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-500 shrink-0 ${isExpanded ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-50 text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600'}`}>
+                          <Folder size={22} fill={isExpanded ? "currentColor" : "none"} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                             <h3 className="text-sm font-black text-slate-900 truncate group-hover:text-indigo-600 transition-colors tracking-tight">{project.project_title}</h3>
+                             <span className={`px-2 py-0.5 rounded-full text-[9px] font-black border uppercase tracking-widest ${getStatusStyles(project.status)}`}>
+                               {project.status}
+                             </span>
                           </div>
-                          
-                          <div className="flex items-center gap-4">
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); handleDeleteProject(project); }}
-                              className="p-2 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                              title="Delete Entire Project History"
-                            >
-                              <Trash2 size={18} />
-                            </button>
-                            <div className={`p-2 rounded-xl transition-all duration-300 ${isExpanded ? 'bg-indigo-50 text-indigo-600 rotate-180' : 'text-slate-300 group-hover:text-slate-600'}`}>
-                              <ChevronDown size={20} />
-                            </div>
+                          <div className="flex items-center gap-4 mt-1 text-[10px] font-black text-slate-400 uppercase tracking-widest flex-wrap">
+                            <span className="font-mono text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded-md border border-slate-100 shrink-0">#{project.project_id}</span>
+                            <span className="flex items-center text-teal-600/70 shrink-0"><Layers size={11} className="mr-1.5" /> {totalVersions} ARCHIVES</span>
+                            <span className="flex items-center opacity-60 truncate"><BookOpen size={11} className="mr-1.5 shrink-0" /> {project.academic_year}</span>
                           </div>
                         </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-4 shrink-0">
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); handleDeleteProject(project); }}
+                          className="p-2 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all opacity-0 group-hover:opacity-100 hidden sm:block"
+                          title="Delete Entire Project History"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                        <div className={`p-2 rounded-xl transition-all duration-300 ${isExpanded ? 'bg-indigo-50 text-indigo-600 rotate-180' : 'text-slate-300 group-hover:text-slate-600'}`}>
+                          <ChevronDown size={20} />
+                        </div>
+                      </div>
+                    </div>
 
-                        {/* Expanded Content */}
-                        {isExpanded && (
-                          <div className="p-6 pt-2 space-y-4 animate-in slide-in-from-top-4 duration-300">
-                            {project.error_message && (
-                              <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-4">
-                                <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-rose-600 shadow-sm shrink-0">
-                                  <AlertCircle size={20} />
-                                </div>
-                                <div className="space-y-1">
-                                  <p className="text-[10px] font-black text-rose-700 uppercase tracking-widest">Protocol Execution Error</p>
-                                  <p className="text-xs text-rose-600 font-medium leading-relaxed">{project.error_message}</p>
-                                </div>
-                              </div>
-                            )}
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                              {Object.entries(project.documents).map(([type, versions]) => {
-                                if (versions.length === 0) return null;
-                                const docKey = `${pKey}-${type}`;
-                                const isDocExpanded = expandedDocs.has(docKey);
-                                const styles = getDocStyles(type);
-
-                                return (
-                                  <div key={type} className={`border rounded-[1.5rem] overflow-hidden transition-all duration-300 flex flex-col ${isDocExpanded ? 'border-indigo-100 shadow-md ring-4 ring-indigo-500/5' : 'border-slate-100 bg-slate-50/30'}`}>
-                                    <div 
-                                      onClick={(e) => { e.stopPropagation(); toggleDoc(pKey, type); }} 
-                                      className={`p-4 flex items-center justify-between cursor-pointer transition-all ${isDocExpanded ? styles.bg : 'hover:bg-slate-50'}`}
-                                    >
-                                      <div className="flex items-center gap-3">
-                                        <div className={`p-2 rounded-xl bg-white border border-slate-100 shadow-sm ${styles.text}`}>
-                                          {styles.icon}
-                                        </div>
-                                        <div className="flex flex-col">
-                                          <span className={`text-[11px] font-black uppercase tracking-widest ${styles.text}`}>{type}</span>
-                                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                                            {versions.length} REVISIONS
-                                          </span>
-                                        </div>
-                                      </div>
-                                      <ChevronRight size={14} className={`text-slate-400 transition-transform duration-300 ${isDocExpanded ? 'rotate-90' : ''}`} />
-                                    </div>
-
-                                    {isDocExpanded && (
-                                      <div className="bg-white border-t border-slate-50 divide-y divide-slate-50 max-h-[300px] overflow-y-auto custom-scrollbar">
-                                        {versions.map((v) => (
-                                          <div key={v.id} className="p-4 flex items-center justify-between group/v hover:bg-slate-50/50 transition-colors">
-                                            <div className="flex items-center gap-4 min-w-0">
-                                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center bg-slate-50 ${styles.text} border border-slate-100 group-hover/v:bg-white shadow-inner`}>
-                                                <span className="text-[10px] font-black">v{v.version}</span>
-                                              </div>
-                                              <div className="min-w-0">
-                                                <div className="flex items-center gap-2">
-                                                   <div className="text-[11px] font-black text-slate-800 uppercase tracking-tight">Revision {v.version}.0</div>
-                                                   {v.version === Math.max(...versions.map(ev => ev.version)) && (
-                                                     <span className="text-[8px] font-black px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded-md border border-emerald-100">LATEST</span>
-                                                   )}
-                                                </div>
-                                                <div className="flex flex-col gap-1 mt-1">
-                                                  <div className="flex items-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                                    <Clock size={10} className="mr-1.5" /> {v.timestamp.split(' ')[0]}
-                                                  </div>
-                                                  <button 
-                                                    onClick={(e) => { e.stopPropagation(); copyToClipboard(v.hash); }} 
-                                                    className="flex items-center text-[10px] hover:text-indigo-600 transition-colors group/copy font-mono tracking-normal"
-                                                  >
-                                                    <Hash size={10} className="mr-1.5" />
-                                                    <span className="truncate max-w-[100px]">{v.hash?.substring(0, 12)}...</span>
-                                                    {copiedHash === v.hash ? <Check size={10} className="ml-1.5 text-emerald-500" /> : <Copy size={10} className="ml-1.5 opacity-0 group-hover/copy:opacity-100" />}
-                                                  </button>
-                                                </div>
-                                              </div>
-                                            </div>
-                                            <div className="flex flex-col gap-2">
-                                              <button 
-                                                onClick={(e) => { e.stopPropagation(); window.open(`/api/registry/download/${v.id}/${type}?preview=1`); }}
-                                                className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg border border-transparent hover:border-indigo-100 transition-all shadow-sm"
-                                                title="View PDF"
-                                              >
-                                                <Eye size={16} />
-                                              </button>
-                                              <button 
-                                                onClick={(e) => { e.stopPropagation(); window.open(`/api/registry/download/${v.id}/${type}`); }}
-                                                className="p-2 text-slate-400 hover:text-teal-600 hover:bg-white rounded-lg border border-transparent hover:border-teal-100 transition-all shadow-sm"
-                                                title="Download"
-                                              >
-                                                <Download size={16} />
-                                              </button>
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
+                    {/* Expanded Content */}
+                    {isExpanded && (
+                      <div className="p-6 pt-2 space-y-4 animate-in slide-in-from-top-4 duration-300">
+                        {project.error_message && (
+                          <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-4">
+                            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-rose-600 shadow-sm shrink-0">
+                              <AlertCircle size={20} />
                             </div>
-                            
-                            {/* Integrity Footer */}
-                            <div className="flex items-center justify-between px-2 py-3 bg-slate-50/50 rounded-2xl text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mt-4 border border-slate-100">
-                               <div className="flex items-center gap-2">
-                                 <ShieldCheck size={12} className="text-emerald-400" />
-                                 <span>Cryptographic Integrity Secured (SHA-256)</span>
-                               </div>
-                               <div className="flex items-center gap-4">
-                                 <span>Total Records: {totalVersions}</span>
-                                 <ArrowRight size={12} />
-                               </div>
+                            <div className="space-y-1">
+                              <p className="text-[10px] font-black text-rose-700 uppercase tracking-widest">Protocol Execution Error</p>
+                              <p className="text-xs text-rose-600 font-medium leading-relaxed">{project.error_message}</p>
                             </div>
                           </div>
                         )}
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {Object.entries(project.documents).map(([type, versions]) => {
+                            if (versions.length === 0) return null;
+                            const docKey = `${pKey}-${type}`;
+                            const isDocExpanded = expandedDocs.has(docKey);
+                            const styles = getDocStyles(type);
+
+                            return (
+                              <div key={type} className={`border rounded-[1.5rem] overflow-hidden transition-all duration-300 flex flex-col ${isDocExpanded ? 'border-indigo-100 shadow-md ring-4 ring-indigo-500/5' : 'border-slate-100 bg-slate-50/30'}`}>
+                                <div 
+                                  onClick={(e) => { e.stopPropagation(); toggleDoc(pKey, type); }} 
+                                  className={`p-4 flex items-center justify-between cursor-pointer transition-all ${isDocExpanded ? styles.bg : 'hover:bg-slate-50'}`}
+                                >
+                                  <div className="flex items-center gap-3">
+                                    <div className={`p-2 rounded-xl bg-white border border-slate-100 shadow-sm ${styles.text}`}>
+                                      {styles.icon}
+                                    </div>
+                                    <div className="flex flex-col">
+                                      <span className={`text-[11px] font-black uppercase tracking-widest ${styles.text}`}>{type}</span>
+                                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                        {versions.length} REVISIONS
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <ChevronRight size={14} className={`text-slate-400 transition-transform duration-300 ${isDocExpanded ? 'rotate-90' : ''}`} />
+                                </div>
+
+                                {isDocExpanded && (
+                                  <div className="bg-white border-t border-slate-50 divide-y divide-slate-50 max-h-[300px] overflow-y-auto custom-scrollbar">
+                                    {versions.map((v) => (
+                                      <div key={v.id} className="p-4 flex items-center justify-between group/v hover:bg-slate-50/50 transition-colors">
+                                        <div className="flex items-center gap-4 min-w-0">
+                                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center bg-slate-50 ${styles.text} border border-slate-100 group-hover/v:bg-white shadow-inner`}>
+                                            <span className="text-[10px] font-black">v{v.version}</span>
+                                          </div>
+                                          <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                               <div className="text-[11px] font-black text-slate-800 uppercase tracking-tight">Revision {v.version}.0</div>
+                                               {v.version === Math.max(...versions.map(ev => ev.version)) && (
+                                                 <span className="text-[8px] font-black px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded-md border border-emerald-100">LATEST</span>
+                                               )}
+                                            </div>
+                                            <div className="flex flex-col gap-1 mt-1">
+                                              <div className="flex items-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                                <Clock size={10} className="mr-1.5" /> {v.timestamp.split(' ')[0]}
+                                              </div>
+                                              <button 
+                                                onClick={(e) => { e.stopPropagation(); copyToClipboard(v.hash); }} 
+                                                className="flex items-center text-[10px] hover:text-indigo-600 transition-colors group/copy font-mono tracking-normal"
+                                              >
+                                                <Hash size={10} className="mr-1.5" />
+                                                <span className="truncate max-w-[80px] sm:max-w-[120px]">{v.hash?.substring(0, 12)}...</span>
+                                                {copiedHash === v.hash ? <Check size={10} className="ml-1.5 text-emerald-500" /> : <Copy size={10} className="ml-1.5 opacity-0 group-hover/copy:opacity-100" />}
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div className="flex flex-col gap-2 shrink-0">
+                                          <button 
+                                            onClick={(e) => { e.stopPropagation(); window.open(`/api/registry/download/${v.id}/${type}?preview=1`); }}
+                                            className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg border border-transparent hover:border-indigo-100 transition-all shadow-sm"
+                                            title="View PDF"
+                                          >
+                                            <Eye size={16} />
+                                          </button>
+                                          <button 
+                                            onClick={(e) => { e.stopPropagation(); window.open(`/api/registry/download/${v.id}/${type}`); }}
+                                            className="p-2 text-slate-400 hover:text-teal-600 hover:bg-white rounded-lg border border-transparent hover:border-teal-100 transition-all shadow-sm"
+                                            title="Download"
+                                          >
+                                            <Download size={16} />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        
+                        {/* Integrity Footer */}
+                        <div className="flex items-center justify-between px-4 py-3 bg-slate-50/50 rounded-2xl text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mt-4 border border-slate-100">
+                           <div className="flex items-center gap-2">
+                             <ShieldCheck size={12} className="text-emerald-400" />
+                             <span className="hidden sm:inline">Cryptographic Integrity Secured (SHA-256)</span>
+                             <span className="sm:hidden">SHA-256 SECURED</span>
+                           </div>
+                           <div className="flex items-center gap-4">
+                             <span>RECORDS: {totalVersions}</span>
+                             <ArrowRight size={12} />
+                           </div>
+                        </div>
                       </div>
-                    );
-                  })}
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Pagination UI */}
+            <div className="bg-white px-8 py-5 border border-slate-200 rounded-[2rem] flex flex-col sm:flex-row items-center justify-between gap-4 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] shadow-sm mt-8">
+                <div className="flex items-center gap-6">
+                    <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-slate-200"></div> TOTAL RECORDS: {filteredAndSortedProjects.length}</span>
                 </div>
-              </section>
-            ))}
+                
+                <div className="flex items-center gap-2">
+                    <button 
+                        onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                        disabled={currentPage === 1}
+                        className="p-2.5 bg-white border border-slate-200 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 transition-all disabled:opacity-30 shadow-sm"
+                    >
+                        <ChevronRight className="w-4 h-4 rotate-180" />
+                    </button>
+                    <div className="px-5 py-2 bg-white border border-slate-200 rounded-xl text-slate-900 shadow-sm flex items-center gap-2">
+                        <span className="text-slate-300">PAGE</span> <span className="text-indigo-600">{currentPage}</span> <span className="text-slate-300">/</span> {totalPages || 1}
+                    </div>
+                    <button 
+                        onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                        disabled={currentPage >= totalPages}
+                        className="p-2.5 bg-white border border-slate-200 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 transition-all disabled:opacity-30 shadow-sm"
+                    >
+                        <ChevronRight className="w-4 h-4" />
+                    </button>
+                </div>
+            </div>
           </div>
         )}
       </main>
@@ -449,7 +466,7 @@ const ArchivalLedgerPage = () => {
       <footer className="mt-auto p-10 border-t border-gray-200/50 bg-white/50 backdrop-blur-md flex flex-col md:flex-row justify-between items-center gap-4 text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] relative z-10">
         <div className="flex items-center gap-3">
           <Logo size={24} className="opacity-70" />
-          DriveSafe Vault &bull; Binary Ledger v2.6.0
+          DriveSafe Vault &bull; 2026
         </div>
         <div className="flex gap-8">
           <span>Self-Sufficient Archive</span>
