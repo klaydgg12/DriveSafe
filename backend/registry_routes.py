@@ -20,9 +20,10 @@ LIVE_STATUS_TRACKER = {}
 def get_user_creds():
     token = session.get('access_token')
     if not token:
-        logger.warning("Access token missing from session")
+        logger.warning("DEBUG: Access token missing from session")
         return None
     try:
+        logger.info("DEBUG: Recreating Credentials from session token")
         # Return Credentials with the required scopes
         return Credentials(token, scopes=[
             "https://www.googleapis.com/auth/drive.readonly",
@@ -30,10 +31,11 @@ def get_user_creds():
             "https://www.googleapis.com/auth/spreadsheets"
         ])
     except Exception as e:
-        logger.error(f"Failed to create credentials: {e}")
+        logger.error(f"DEBUG: Failed to create credentials: {e}", exc_info=True)
         return None
 
 def get_services(requested_sheet_id=None, provided_user_creds=None):
+    logger.info("DEBUG: Entering get_services")
     # Priority for Sheet ID
     sheet_id = requested_sheet_id
     if not sheet_id and request:
@@ -47,22 +49,36 @@ def get_services(requested_sheet_id=None, provided_user_creds=None):
     if not sheet_id:
         sheet_id = os.getenv('SHEET_ID')
         
+    logger.info(f"DEBUG: Target Sheet ID: {sheet_id}")
     user_creds = provided_user_creds or get_user_creds()
     service_account_path = os.getenv('SERVICE_ACCOUNT_JSON')
     archive_root = os.getenv('ARCHIVE_ROOT', 'Capstone_Archives')
     
-    # Logic: Use user creds if available, else fallback to service account if it exists
-    sheets_service = RegistrySheetsService(
-        user_credentials=user_creds,
-        service_account_json_path=service_account_path if not user_creds else None,
-        sheet_id=sheet_id
-    )
+    logger.info(f"DEBUG: User Creds Present: {user_creds is not None}")
+    logger.info(f"DEBUG: Service Account Path Present: {service_account_path is not None}")
+
+    try:
+        sheets_service = RegistrySheetsService(
+            user_credentials=user_creds,
+            service_account_json_path=service_account_path if not user_creds else None,
+            sheet_id=sheet_id
+        )
+        logger.info("DEBUG: RegistrySheetsService initialized")
+    except Exception as e:
+        logger.error(f"DEBUG: Failed to init RegistrySheetsService: {e}", exc_info=True)
+        raise e
     
-    engine = ArchivalEngine(
-        user_credentials=user_creds,
-        service_account_json_path=service_account_path if not user_creds else None,
-        archive_root=archive_root
-    )
+    try:
+        engine = ArchivalEngine(
+            user_credentials=user_creds,
+            service_account_json_path=service_account_path if not user_creds else None,
+            archive_root=archive_root
+        )
+        logger.info("DEBUG: ArchivalEngine initialized")
+    except Exception as e:
+        logger.error(f"DEBUG: Failed to init ArchivalEngine: {e}", exc_info=True)
+        raise e
+
     return sheets_service, engine
 
 @registry_bp.route('/api/registry/list-sheets', methods=['GET'])
@@ -71,13 +87,19 @@ def list_sheets():
     if current_user.role != 'teacher':
         return jsonify({"error": "Unauthorized"}), 403
     try:
-        # Use common get_services to ensure consistent auth logic & fallback
+        logger.info("DEBUG: Requesting list_sheets")
         sheets_service, _ = get_services()
+        logger.info("DEBUG: Calling sheets_service.list_available_sheets()")
         sheets = sheets_service.list_available_sheets()
+        logger.info(f"DEBUG: list_available_sheets returned {len(sheets)} items")
         return jsonify(sheets)
     except Exception as e:
-        logger.error(f"List sheets error: {str(e)}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"DEBUG: List sheets route error: {str(e)}", exc_info=True)
+        # Return a more descriptive error if it's a known Google error
+        error_detail = str(e)
+        if "invalid_grant" in error_detail.lower():
+            error_detail = "Your Google session has expired. Please log out and sign in again."
+        return jsonify({"error": error_detail}), 500
 
 @registry_bp.route('/api/registry/years', methods=['GET'])
 @login_required
