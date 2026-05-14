@@ -57,40 +57,35 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_pre_ping': True,
 }
 
-# --- SESSION SECURITY ---
-is_prod = os.getenv('NODE_ENV') == 'production' or os.getenv('RAILWAY_ENVIRONMENT') is not None
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' if not is_prod else 'None'
+# --- ENVIRONMENT & SESSION CONFIG ---
+# Detect production based on common env vars or if it's running behind a secure proxy
+is_prod = (
+    os.getenv('FLASK_ENV') == 'production' or 
+    os.getenv('NODE_ENV') == 'production' or 
+    os.getenv('RAILWAY_ENVIRONMENT') is not None or
+    os.getenv('PROD') == 'true'
+)
+
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'drivesafe-secret-key-12345')
+app.config['SQLALCHEMY_DATABASE_URI'] = get_robust_database_uri()
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_size': 10,
+    'max_overflow': 20,
+    'pool_recycle': 300,
+    'pool_pre_ping': True,
+}
+
+# Session security
+app.config['SESSION_COOKIE_SAMESITE'] = 'None' if is_prod else 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = is_prod
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-
-# --- DEBUG STATUS ROUTE ---
-@app.route('/api/debug-status', methods=['GET'])
-def debug_status():
-    db_ok = False
-    db_error = None
-    try:
-        db.session.execute(db.text('SELECT 1'))
-        db_ok = True
-    except Exception as e:
-        db_error = str(e)
-
-    return jsonify({
-        "database_connected": db_ok,
-        "database_error": db_error,
-        "database_url_masked": app.config['SQLALCHEMY_DATABASE_URI'].split('@')[-1] if '@' in app.config['SQLALCHEMY_DATABASE_URI'] else "HIDDEN",
-        "session_token_present": 'access_token' in session,
-        "user_authenticated": current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else False,
-        "is_production": is_prod,
-        "env_check": {
-            "SHEET_ID": os.getenv('SHEET_ID') is not None,
-            "SERVICE_ACCOUNT_JSON": os.getenv('SERVICE_ACCOUNT_JSON') is not None,
-            "GOOGLE_CLIENT_SECRET_JSON": os.getenv('GOOGLE_CLIENT_SECRET_JSON') is not None
-        }
-    })
+app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=7)
 
 # --- COMPONENT INITIALIZATION ---
 db.init_app(app)
 login_manager = LoginManager(app)
+# Supports credentials for cross-origin if needed, though usually same-domain in prod
 CORS(app, supports_credentials=True)
 
 @login_manager.user_loader
@@ -101,11 +96,11 @@ def load_user(user_id):
 def unauthorized():
     return jsonify({"error": "Unauthorized. Please log in first."}), 401
 
-# Register Registry Blueprint
+# Register Blueprints
 from registry_routes import registry_bp
 app.register_blueprint(registry_bp)
 
-# --- DEBUG STATUS ROUTE (Must be before frontend catch-all) ---
+# --- SYSTEM ROUTES ---
 @app.route('/api/debug-status', methods=['GET'])
 def debug_status():
     db_ok = False
@@ -117,15 +112,16 @@ def debug_status():
         db_error = str(e)
 
     return jsonify({
+        "status": "online",
         "database_connected": db_ok,
         "database_error": db_error,
-        "session_keys": list(session.keys()),
-        "has_access_token": 'access_token' in session,
-        "user_authenticated": current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else False,
         "is_production": is_prod,
-        "env_check": {
+        "session_keys": list(session.keys()),
+        "user_authenticated": current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else False,
+        "env_vars": {
             "SHEET_ID": os.getenv('SHEET_ID') is not None,
-            "SERVICE_ACCOUNT_JSON": os.getenv('SERVICE_ACCOUNT_JSON') is not None
+            "SERVICE_ACCOUNT": os.getenv('SERVICE_ACCOUNT_JSON') is not None,
+            "CLIENT_SECRET": os.getenv('GOOGLE_CLIENT_SECRET_JSON') is not None
         }
     })
 
@@ -133,10 +129,11 @@ def debug_status():
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve(path):
-    if path != "" and os.path.exists(app.static_folder + '/' + path):
+    # Check if we are requesting a file that exists in the static folder
+    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
         return send_from_directory(app.static_folder, path)
-    else:
-        return send_from_directory(app.static_folder, 'index.html')
+    # Otherwise, serve index.html for React Router
+    return send_from_directory(app.static_folder, 'index.html')
 
 # --- AUTH ROUTES ---
 @app.route('/auth/google', methods=['POST'])
