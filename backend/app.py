@@ -8,7 +8,7 @@ import dotenv
 # CRITICAL: This must be set before other imports to handle Google's scope expansion
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
-from flask import Flask, request, jsonify, session, send_from_directory
+from flask import Flask, request, jsonify, session, send_from_directory, has_request_context
 from flask_cors import CORS
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from google.oauth2.credentials import Credentials
@@ -65,7 +65,7 @@ is_prod = (
     os.getenv('PROD') == 'true'
 )
 
-# Force production session settings if it's likely a VPS
+# Force production session settings if on Linux VPS
 if not is_prod and os.path.exists('/etc/debian_version'):
     is_prod = True
 
@@ -90,6 +90,43 @@ def unauthorized():
 # Register Registry Blueprint
 from registry_routes import registry_bp
 app.register_blueprint(registry_bp)
+
+# --- SYSTEM ROUTES ---
+@app.route('/api/debug-status', methods=['GET'])
+def debug_status():
+    db_ok = False
+    try:
+        db.session.execute(db.text('SELECT 1'))
+        db_ok = True
+    except Exception as e:
+        logger.error(f"DEBUG DB ERROR: {e}")
+
+    drive_api_ok = "Not Tested"
+    try:
+        from registry_sheets import RegistrySheetsService
+        sa_json = os.getenv('SERVICE_ACCOUNT_JSON')
+        if sa_json:
+            svc = RegistrySheetsService(service_account_json_path=sa_json)
+            svc.client.list_spreadsheet_files()
+            drive_api_ok = "Service Account Connection Successful"
+        else:
+            drive_api_ok = "SERVICE_ACCOUNT_JSON env var missing"
+    except Exception as e:
+        drive_api_ok = f"API Error: {str(e)}"
+
+    return jsonify({
+        "status": "online",
+        "is_production": is_prod,
+        "database": "connected" if db_ok else "failed",
+        "google_drive_api": drive_api_ok,
+        "session_keys": list(session.keys()) if has_request_context() else [],
+        "user_authenticated": current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else False,
+        "env_vars": {
+            "SHEET_ID": os.getenv('SHEET_ID') is not None,
+            "SERVICE_ACCOUNT": os.getenv('SERVICE_ACCOUNT_JSON') is not None,
+            "CLIENT_SECRET": os.getenv('GOOGLE_CLIENT_SECRET_JSON') is not None
+        }
+    })
 
 # --- AUTH ROUTES ---
 @app.route('/auth/google', methods=['POST'])
@@ -130,15 +167,10 @@ def google_auth():
         flow.fetch_token(code=code)
         service = build('oauth2', 'v2', credentials=flow.credentials)
         user_info = service.userinfo().get().execute()
-        email = user_info['email']
-
-        # --- RESTRICT TO INSTITUTIONAL DOMAIN ---
-        if not email.endswith('@cit.edu'):
-            return jsonify({"error": "Unauthorized. Please use your institutional (@cit.edu) account."}), 403
         
-        user = User.query.filter_by(email=email).first()
+        user = User.query.filter_by(email=user_info['email']).first()
         if not user:
-            user = User(email=email, name=user_info['name'], role='teacher')
+            user = User(email=user_info['email'], name=user_info['name'], role='teacher')
             db.session.add(user)
             db.session.commit()
             
@@ -173,6 +205,8 @@ def logout():
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve(path):
+    if path.startswith('api/') or path.startswith('auth/'):
+        return jsonify({"error": "API route not found"}), 404
     if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
         return send_from_directory(app.static_folder, path)
     return send_from_directory(app.static_folder, 'index.html')

@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request, current_app, session
+from flask import Blueprint, jsonify, request, current_app, session, has_request_context
 from flask_login import login_required, current_user
 import os
 import requests
@@ -15,17 +15,18 @@ registry_bp = Blueprint('registry', __name__)
 logger = logging.getLogger(__name__)
 
 # Global tracker for live project statuses (Real-time sync helper)
-# Key: {sheet_id}_{year}_{row_index}, Value: status string
 LIVE_STATUS_TRACKER = {}
 
 def get_user_creds():
+    # Only access session if in request context
+    if not has_request_context():
+        return None
     token = session.get('access_token')
     if not token:
         logger.warning("DEBUG: Access token missing from session")
         return None
     try:
         logger.info("DEBUG: Recreating Credentials from session token")
-        # Return Credentials with the required scopes
         return Credentials(token, scopes=[
             "https://www.googleapis.com/auth/drive.readonly",
             "https://www.googleapis.com/auth/drive.file",
@@ -37,14 +38,15 @@ def get_user_creds():
 
 def get_services(requested_sheet_id=None, provided_user_creds=None):
     logger.info("DEBUG: Entering get_services")
-    # Priority for Sheet ID
     sheet_id = requested_sheet_id
-    if not sheet_id and request:
+    
+    # Safely handle request context
+    if not sheet_id and has_request_context():
         try:
-            if request.is_json:
+            # Prefer args for GET requests
+            sheet_id = request.args.get('sheet_id')
+            if not sheet_id and request.is_json:
                 sheet_id = request.json.get('sheet_id')
-            if not sheet_id:
-                sheet_id = request.args.get('sheet_id')
         except: pass
             
     if not sheet_id:
@@ -59,7 +61,6 @@ def get_services(requested_sheet_id=None, provided_user_creds=None):
     logger.info(f"DEBUG: Service Account Path Present: {service_account_path is not None}")
 
     try:
-        # Use user creds if available, else fallback to service account if it exists
         sheets_service = RegistrySheetsService(
             user_credentials=user_creds,
             service_account_json_path=service_account_path if not user_creds else None,
@@ -223,7 +224,7 @@ def archive_selected():
     except:
         workbook_name = "Archives"
 
-    app = current_app._get_current_object()
+    app_obj = current_app._get_current_object()
     
     def process_task(app_context, project_list, creds, sid, wb_name):
         from concurrent.futures import ThreadPoolExecutor
@@ -294,48 +295,9 @@ def archive_selected():
                     finally:
                         db.session.remove()
 
-    thread = threading.Thread(target=process_task, args=(app, projects, user_creds, sheet_id, workbook_name))
+    thread = threading.Thread(target=process_task, args=(app_obj, projects, user_creds, sheet_id, workbook_name))
     thread.start()
     return jsonify({"message": f"Started archival for {len(projects)} projects."}), 202
-
-@registry_bp.route('/api/registry/download/<int:ledger_id>/<doc_type>', methods=['GET'])
-@login_required
-def download_from_db(ledger_id, doc_type):
-    from models import ArchivalLedger
-    from flask import send_file
-    import io
-    record = ArchivalLedger.query.get_or_404(ledger_id)
-    preview = request.args.get('preview') == '1'
-    
-    path_field = f"{doc_type}_local_path"
-    binary_field = f"{doc_type}_binary"
-    hash_field = f"{doc_type}_hash"
-    
-    binary_data = getattr(record, binary_field, None)
-    file_path = getattr(record, path_field, '')
-    target_hash = getattr(record, hash_field, None)
-    
-    if not binary_data and target_hash:
-        source_record = ArchivalLedger.query.filter(
-            ArchivalLedger.project_id == record.project_id,
-            getattr(ArchivalLedger, hash_field) == target_hash,
-            getattr(ArchivalLedger, binary_field).isnot(None)
-        ).order_by(ArchivalLedger.id.asc()).first()
-        if source_record: binary_data = getattr(source_record, binary_field)
-
-    if not binary_data: return jsonify({"error": "File not found"}), 404
-
-    ext = os.path.splitext(file_path)[1] if file_path else ".pdf"
-    clean_title = record.project_title.replace(' ', '_').replace('/', '_')
-    filename = f"{clean_title}_{doc_type.upper()}_v{record.version}{ext}"
-
-    return send_file(
-        io.BytesIO(binary_data),
-        mimetype='application/pdf',
-        as_attachment=not preview,
-        download_name=filename,
-        max_age=0 if preview else None
-    )
 
 @registry_bp.route('/api/registry/reset', methods=['POST'])
 @login_required
@@ -351,106 +313,6 @@ def reset_project_status():
         )
         return jsonify({"message": "Reset successful"})
     except Exception as e: return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
-
-@registry_bp.route('/api/registry/ledger/grouped', methods=['GET'])
-@login_required
-def get_grouped_ledger():
-    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
-    try:
-        from models import ArchivalLedger
-        from sqlalchemy.orm import defer
-        from collections import defaultdict
-        academic_year = request.args.get('year')
-        workbook_name = request.args.get('workbook')
-        query = ArchivalLedger.query.options(
-            defer(ArchivalLedger.srs_binary), defer(ArchivalLedger.sdd_binary),
-            defer(ArchivalLedger.spmp_binary), defer(ArchivalLedger.std_binary),
-            defer(ArchivalLedger.ri_binary), defer(ArchivalLedger.srs_text),
-            defer(ArchivalLedger.sdd_text), defer(ArchivalLedger.spmp_text),
-            defer(ArchivalLedger.std_text), defer(ArchivalLedger.ri_text)
-        )
-        if academic_year: query = query.filter_by(academic_year=academic_year)
-        if workbook_name: query = query.filter_by(workbook_name=workbook_name)
-        records = query.order_by(ArchivalLedger.id.asc()).all()
-        if not records: return jsonify([])
-        last_hashes = defaultdict(lambda: defaultdict(lambda: None))
-        doc_versions = defaultdict(lambda: defaultdict(int))
-        grouped_data = {}
-        for r in records:
-            project_key = f"{r.project_id}_{r.project_title}"
-            if project_key not in grouped_data:
-                grouped_data[project_key] = {
-                    "project_id": r.project_id, "project_title": r.project_title,
-                    "academic_year": r.academic_year, "workbook_name": r.workbook_name,
-                    "documents": { "srs": [], "sdd": [], "spmp": [], "std": [], "ri": [] }
-                }
-            target = grouped_data[project_key]
-            for doc_type in ["srs", "sdd", "spmp", "std", "ri"]:
-                path = getattr(r, f"{doc_type}_local_path")
-                current_hash = getattr(r, f"{doc_type}_hash")
-                if path and current_hash:
-                    if current_hash != last_hashes[project_key][doc_type]:
-                        last_hashes[project_key][doc_type] = current_hash
-                        doc_versions[project_key][doc_type] += 1
-                        target["documents"][doc_type].append({
-                            "id": r.id, "version": doc_versions[project_key][doc_type],
-                            "hash": current_hash, "timestamp": r.archived_at.strftime("%Y-%m-%d %H:%M:%S") if r.archived_at else None,
-                            "status": r.status
-                        })
-        result = list(grouped_data.values())
-        for project in result:
-            for doc_type in project["documents"]: project["documents"][doc_type].reverse()
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"Ledger Group Error: {e}", exc_info=True)
-        return jsonify([])
-
-@registry_bp.route('/api/registry/ledger/tabs', methods=['GET'])
-@login_required
-def get_ledger_tabs():
-    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
-    workbook_name = request.args.get('workbook')
-    try:
-        from models import ArchivalLedger, db
-        query = db.session.query(ArchivalLedger.academic_year)
-        if workbook_name: query = query.filter(ArchivalLedger.workbook_name == workbook_name)
-        years = query.distinct().all()
-        return jsonify([y[0] for y in years if y and y[0]])
-    except: return jsonify([])
-
-@registry_bp.route('/api/registry/ledger', methods=['GET'])
-@login_required
-def get_ledger():
-    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
-    from models import ArchivalLedger
-    from sqlalchemy.orm import defer
-    records = ArchivalLedger.query.options(
-        defer(ArchivalLedger.srs_binary), defer(ArchivalLedger.sdd_binary), defer(ArchivalLedger.spmp_binary),
-        defer(ArchivalLedger.std_binary), defer(ArchivalLedger.ri_binary), defer(ArchivalLedger.srs_text),
-        defer(ArchivalLedger.sdd_text), defer(ArchivalLedger.spmp_text), defer(ArchivalLedger.std_text),
-        defer(ArchivalLedger.ri_text)
-    ).order_by(ArchivalLedger.id.desc()).all()
-    return jsonify([{
-        "id": r.id, "project_id": r.project_id, "project_title": r.project_title,
-        "academic_year": r.academic_year, "workbook_name": r.workbook_name,
-        "status": r.status, "version": r.version,
-        "archived_at": r.archived_at.strftime("%Y-%m-%d %H:%M:%S") if r.archived_at else None
-    } for r in records])
-
-@registry_bp.route('/api/registry/ledger/<int:ledger_id>', methods=['DELETE'])
-@login_required
-def delete_ledger_record(ledger_id):
-    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
-    from models import ArchivalLedger
-    record = ArchivalLedger.query.get_or_404(ledger_id)
-    try:
-        db.session.delete(record)
-        db.session.commit()
-        return jsonify({"message": "Successfully removed record"}), 200
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"DELETE ERROR: {e}")
-        return jsonify({"error": str(e)}), 500
 
 @registry_bp.route('/api/registry/stats', methods=['GET'])
 @login_required
