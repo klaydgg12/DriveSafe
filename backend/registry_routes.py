@@ -107,12 +107,16 @@ def get_years():
     if current_user.role != 'teacher':
         return jsonify({"error": "Unauthorized"}), 403
     try:
+        logger.info("DEBUG: get_years requested")
         sheets_service, _ = get_services()
-        if not sheets_service.workbook:
-             return jsonify({"error": "No Google Sheet selected"}), 400
+        if not sheets_service or not sheets_service.workbook:
+             logger.warning("DEBUG: get_years - no workbook selected")
+             return jsonify({"error": "No Google Sheet selected or service unavailable"}), 400
         years = sheets_service.get_all_sheet_names()
+        logger.info(f"DEBUG: get_years found {len(years)} sheets")
         return jsonify(years)
     except Exception as e:
+        logger.error(f"DEBUG: get_years error: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @registry_bp.route('/api/registry/projects', methods=['GET'])
@@ -423,12 +427,13 @@ def get_ledger_workbooks():
     if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
     try:
         from models import ArchivalLedger, db
-        # Ensure we only get non-null, non-empty distinct names
+        # Wrapping query in list/set for cleaner processing and thread safety
         workbooks = db.session.query(ArchivalLedger.workbook_name).distinct().all()
-        clean_list = sorted([w[0] for w in workbooks if w and w[0] and str(w[0]).strip()])
+        clean_list = sorted(list(set([str(w[0]).strip() for w in workbooks if w and w[0] and str(w[0]).strip()])))
         return jsonify(clean_list)
     except Exception as e:
-        logger.error(f"Workbook List Error: {e}")
+        logger.error(f"DEBUG: get_ledger_workbooks error: {str(e)}", exc_info=True)
+        # Return empty list to prevent frontend crash
         return jsonify([])
 
 @registry_bp.route('/api/registry/ledger/tabs', methods=['GET'])

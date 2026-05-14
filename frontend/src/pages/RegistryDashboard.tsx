@@ -92,6 +92,7 @@ const RegistryDashboard: React.FC = () => {
     }, [selectedYear, selectedWorkbookId]);
 
     const fetchWorkbooks = async () => {
+        const is_prod = window.location.hostname !== 'localhost';
         try {
             const res = await axios.get(`/api/registry/list-sheets`, { withCredentials: true });
             setWorkbooks(res.data);
@@ -103,7 +104,7 @@ const RegistryDashboard: React.FC = () => {
             
             // Critical debug info
             if (is_prod) {
-                alert(`DEBUG ERROR: ${errorMsg}\n\nTrace: ${errorData?.traceback?.substring(0, 500) || 'No traceback'}`);
+                alert(`DEBUG ERROR (list-sheets): ${errorMsg}\n\nTrace: ${errorData?.traceback?.substring(0, 1000) || 'No traceback available. Check server logs.'}`);
             }
             
             setMessage({ text: `Failed to fetch workbooks: ${errorMsg}`, type: 'error' }); 
