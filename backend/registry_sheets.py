@@ -1,6 +1,7 @@
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2 import service_account
 import os
+import json
 import datetime
 import logging
 
@@ -35,12 +36,27 @@ class RegistrySheetsService:
         self._header_cache = {} # Cache for worksheet headers
         
         if user_credentials:
+            logger.info("Initializing RegistrySheetsService with User Credentials")
             self.client = gspread.authorize(user_credentials)
         elif service_account_json_path:
-            self.creds = ServiceAccountCredentials.from_json_keyfile_name(service_account_json_path, self.scope)
-            self.client = gspread.authorize(self.creds)
+            logger.info("Initializing RegistrySheetsService with Service Account")
+            try:
+                # Support both a file path and the actual JSON string
+                if service_account_json_path.strip().startswith('{'):
+                    logger.info("Detected Service Account JSON string")
+                    info = json.loads(service_account_json_path)
+                    self.creds = service_account.Credentials.from_service_account_info(info, scopes=self.scope)
+                else:
+                    logger.info(f"Detected Service Account file path: {service_account_json_path}")
+                    self.creds = service_account.Credentials.from_service_account_file(service_account_json_path, scopes=self.scope)
+                
+                self.client = gspread.authorize(self.creds)
+            except Exception as e:
+                logger.error(f"Failed to authorize service account: {e}")
+                raise e
         else:
             raise ValueError("No authentication method provided for RegistrySheetsService")
+        
         self.sheet_id = sheet_id
         self.workbook = None
         if sheet_id:
