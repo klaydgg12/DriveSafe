@@ -8,9 +8,12 @@ from flask_cors import CORS
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from werkzeug.middleware.proxy_fix import ProxyFix
 import datetime
+import json
+import os
 import dotenv
-import re
+import traceback
 
 # Load environment variables
 dotenv.load_dotenv()
@@ -21,60 +24,68 @@ app = Flask(__name__,
             static_folder='../frontend/dist',
             static_url_path='/')
 
+# Handle proxies (Railway, Render, etc.)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
 # --- DATABASE CONFIGURATION ---
 def get_robust_database_uri():
     # Priority 1: Use DATABASE_URL from environment
-    raw_url = os.getenv('DATABASE_URL', 'mysql+pymysql://root:123Earl.@localhost/drivesafe_prod').strip().strip("'").strip('"')
-    
-    # Validation
-    if not raw_url or len(raw_url) < 10 or "://" not in raw_url:
-        print("⚠️ [DATABASE] Invalid or missing DATABASE_URL. Falling back to SQLite.", flush=True)
-        return 'sqlite:///drivesafe.db'
+    env_url = os.getenv('DATABASE_URL')
+    if env_url:
+        raw_url = env_url.strip().strip("'").strip('"')
+    else:
+        # Fallback for local dev
+        raw_url = 'mysql+pymysql://root:123Earl.@localhost/drivesafe_prod'
     
     db_url = raw_url
-    # Ensure MySQL/MariaDB use pymysql driver
     if raw_url.startswith('mariadb://'):
         db_url = raw_url.replace('mariadb://', 'mysql+pymysql://', 1)
     elif raw_url.startswith('mysql://') and 'pymysql' not in raw_url:
         db_url = raw_url.replace('mysql://', 'mysql+pymysql://', 1)
-    # Fix for Postgres if needed (Render often uses postgres://)
     elif raw_url.startswith('postgres://'):
         db_url = raw_url.replace('postgres://', 'postgresql://', 1)
 
-    # Log connection (masked for security)
-    masked = db_url.split('@')[-1] if '@' in db_url else db_url
-    print(f"✅ [DATABASE] Connecting to: {db_url.split('://')[0]}://****@{masked}", flush=True)
     return db_url
 
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'drivesafe-secret-key')
 app.config['SQLALCHEMY_DATABASE_URI'] = get_robust_database_uri()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_size': 20,
-    'max_overflow': 30,
-    'pool_recycle': 3600,
+    'pool_size': 10,
+    'max_overflow': 20,
+    'pool_recycle': 300,
     'pool_pre_ping': True,
 }
 
-# --- SESSION SECURITY FOR PRODUCTION ---
+# --- SESSION SECURITY ---
 is_prod = os.getenv('NODE_ENV') == 'production' or os.getenv('RAILWAY_ENVIRONMENT') is not None
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' if not is_prod else 'None'
 app.config['SESSION_COOKIE_SECURE'] = is_prod
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=7)
 
 # --- DEBUG STATUS ROUTE ---
 @app.route('/api/debug-status', methods=['GET'])
 def debug_status():
-    has_token = 'access_token' in session
-    has_user = current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else False
+    db_ok = False
+    db_error = None
+    try:
+        db.session.execute(db.text('SELECT 1'))
+        db_ok = True
+    except Exception as e:
+        db_error = str(e)
+
     return jsonify({
-        "session_token_present": has_token,
-        "user_authenticated": has_user,
-        "user_role": current_user.role if has_user else None,
-        "env_sheet_id": os.getenv('SHEET_ID') is not None,
-        "env_service_account": os.getenv('SERVICE_ACCOUNT_JSON') is not None,
-        "is_production": is_prod
+        "database_connected": db_ok,
+        "database_error": db_error,
+        "database_url_masked": app.config['SQLALCHEMY_DATABASE_URI'].split('@')[-1] if '@' in app.config['SQLALCHEMY_DATABASE_URI'] else "HIDDEN",
+        "session_token_present": 'access_token' in session,
+        "user_authenticated": current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else False,
+        "is_production": is_prod,
+        "env_check": {
+            "SHEET_ID": os.getenv('SHEET_ID') is not None,
+            "SERVICE_ACCOUNT_JSON": os.getenv('SERVICE_ACCOUNT_JSON') is not None,
+            "GOOGLE_CLIENT_SECRET_JSON": os.getenv('GOOGLE_CLIENT_SECRET_JSON') is not None
+        }
     })
 
 # --- COMPONENT INITIALIZATION ---
@@ -118,30 +129,41 @@ def google_auth():
     try:
         from google_auth_oauthlib.flow import Flow 
         import json
-        secret_path = os.path.join(os.path.dirname(__file__), "client_secret.json")
         
-        if not os.path.exists(secret_path):
-            env_secret = os.getenv('GOOGLE_CLIENT_SECRET_JSON')
-            if env_secret:
-                with open(secret_path, 'w') as f:
-                    json.loads(env_secret) 
-                    f.write(env_secret)
-            else:
-                return jsonify({"error": "client_secret.json not found on backend."}), 400
-
-        flow = Flow.from_client_secrets_file(
-            secret_path, 
-            scopes=[
-                "openid", 
-                "email", 
-                "profile", 
-                "https://www.googleapis.com/auth/drive.readonly",
-                "https://www.googleapis.com/auth/drive.file",
-                "https://www.googleapis.com/auth/spreadsheets"
-            ], 
-            redirect_uri='postmessage'
-        )
+        # Priority 1: GOOGLE_CLIENT_SECRET_JSON environment variable
+        env_secret = os.getenv('GOOGLE_CLIENT_SECRET_JSON')
+        if env_secret:
+            logger.info("Using GOOGLE_CLIENT_SECRET_JSON from environment")
+            client_config = json.loads(env_secret)
+            flow = Flow.from_client_config(
+                client_config,
+                scopes=[
+                    "openid", "email", "profile", 
+                    "https://www.googleapis.com/auth/drive.readonly",
+                    "https://www.googleapis.com/auth/drive.file",
+                    "https://www.googleapis.com/auth/spreadsheets"
+                ],
+                redirect_uri='postmessage'
+            )
+        else:
+            # Fallback: physical file
+            secret_path = os.path.join(os.path.dirname(__file__), "client_secret.json")
+            if not os.path.exists(secret_path):
+                return jsonify({"error": "Google Client Secret configuration missing."}), 400
+            
+            flow = Flow.from_client_secrets_file(
+                secret_path, 
+                scopes=[
+                    "openid", "email", "profile", 
+                    "https://www.googleapis.com/auth/drive.readonly",
+                    "https://www.googleapis.com/auth/drive.file",
+                    "https://www.googleapis.com/auth/spreadsheets"
+                ], 
+                redirect_uri='postmessage'
+            )
+        
         flow.fetch_token(code=code)
+        # ...
         service = build('oauth2', 'v2', credentials=flow.credentials)
         user_info = service.userinfo().get().execute()
         

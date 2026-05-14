@@ -104,7 +104,8 @@ const RegistryDashboard: React.FC = () => {
             
             // Critical debug info
             if (is_prod) {
-                alert(`DEBUG ERROR (list-sheets): ${errorMsg}\n\nTrace: ${errorData?.traceback?.substring(0, 1000) || 'No traceback available. Check server logs.'}`);
+                const checkUrl = `${window.location.origin}/api/debug-status`;
+                alert(`CRITICAL PRODUCTION ERROR\n\nReason: ${errorMsg}\n\n1. Please visit ${checkUrl} in your browser to check system status.\n2. Ensure DATABASE_URL is set in your environment.`);
             }
             
             setMessage({ text: `Failed to fetch workbooks: ${errorMsg}`, type: 'error' }); 
