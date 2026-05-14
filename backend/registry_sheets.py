@@ -212,8 +212,12 @@ class RegistrySheetsService:
 
     def list_available_sheets(self):
         """List all Google Sheets files the service account can access"""
-        # We use the underlying gspread client's auth session to call Drive API
-        # Or just use gspread's openall() which might be slow if there are many files.
-        # list_spreadsheet_files() is better.
-        files = self.client.list_spreadsheet_files()
-        return [{"id": f["id"], "name": f["name"]} for f in files]
+        try:
+            # This requires the "Google Drive API" to be enabled in Cloud Console
+            files = self.client.list_spreadsheet_files()
+            return [{"id": f["id"], "name": f["name"]} for f in files]
+        except Exception as e:
+            error_msg = str(e)
+            if "Drive API" in error_msg or "403" in error_msg:
+                raise Exception("Google Drive API is not enabled. Please enable it in the Google Cloud Console.")
+            raise Exception(f"Failed to list workbooks: {error_msg}")
