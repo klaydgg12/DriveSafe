@@ -98,11 +98,14 @@ const RegistryDashboard: React.FC = () => {
             if (res.data.length > 0) setSelectedWorkbookId(res.data[0].id);
         } catch (err: any) { 
             console.error("FULL ERROR OBJECT:", err);
-            if (err.response) {
-                console.error("ERROR RESPONSE DATA:", err.response.data);
-                console.error("ERROR RESPONSE STATUS:", err.response.status);
+            const errorData = err.response?.data;
+            const errorMsg = errorData?.error || err.message || "Unknown error";
+            
+            // Critical debug info
+            if (is_prod) {
+                alert(`DEBUG ERROR: ${errorMsg}\n\nTrace: ${errorData?.traceback?.substring(0, 500) || 'No traceback'}`);
             }
-            const errorMsg = err.response?.data?.error || err.message || "Failed to load Google Sheets.";
+            
             setMessage({ text: `Failed to fetch workbooks: ${errorMsg}`, type: 'error' }); 
         }
     };

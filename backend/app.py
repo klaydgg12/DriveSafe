@@ -55,9 +55,27 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_recycle': 3600,
     'pool_pre_ping': True,
 }
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = False
+
+# --- SESSION SECURITY FOR PRODUCTION ---
+is_prod = os.getenv('NODE_ENV') == 'production' or os.getenv('RAILWAY_ENVIRONMENT') is not None
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' if not is_prod else 'None'
+app.config['SESSION_COOKIE_SECURE'] = is_prod
 app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=7)
+
+# --- DEBUG STATUS ROUTE ---
+@app.route('/api/debug-status', methods=['GET'])
+def debug_status():
+    has_token = 'access_token' in session
+    has_user = current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else False
+    return jsonify({
+        "session_token_present": has_token,
+        "user_authenticated": has_user,
+        "user_role": current_user.role if has_user else None,
+        "env_sheet_id": os.getenv('SHEET_ID') is not None,
+        "env_service_account": os.getenv('SERVICE_ACCOUNT_JSON') is not None,
+        "is_production": is_prod
+    })
 
 # --- COMPONENT INITIALIZATION ---
 db.init_app(app)

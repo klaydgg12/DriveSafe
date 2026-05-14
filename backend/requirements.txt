@@ -4,8 +4,8 @@ flask-sqlalchemy
 flask-login
 pymysql
 cryptography
-gspread
-google-auth
+gspread>=6.1.0
+google-auth>=2.20.0
 google-auth-httplib2
 google-auth-oauthlib
 google-api-python-client
