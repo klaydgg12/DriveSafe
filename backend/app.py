@@ -27,102 +27,37 @@ app = Flask(__name__,
 # Handle proxies (Railway, Render, etc.)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-# --- DATABASE CONFIGURATION ---
-def get_robust_database_uri():
-    # Priority 1: Use DATABASE_URL from environment
-    env_url = os.getenv('DATABASE_URL')
-    if env_url:
-        raw_url = env_url.strip().strip("'").strip('"')
-    else:
-        # Fallback for local dev
-        raw_url = 'mysql+pymysql://root:123Earl.@localhost/drivesafe_prod'
-    
-    db_url = raw_url
-    if raw_url.startswith('mariadb://'):
-        db_url = raw_url.replace('mariadb://', 'mysql+pymysql://', 1)
-    elif raw_url.startswith('mysql://') and 'pymysql' not in raw_url:
-        db_url = raw_url.replace('mysql://', 'mysql+pymysql://', 1)
-    elif raw_url.startswith('postgres://'):
-        db_url = raw_url.replace('postgres://', 'postgresql://', 1)
-
-    return db_url
-
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'drivesafe-secret-key')
-app.config['SQLALCHEMY_DATABASE_URI'] = get_robust_database_uri()
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_size': 10,
-    'max_overflow': 20,
-    'pool_recycle': 300,
-    'pool_pre_ping': True,
-}
-
-# --- ENVIRONMENT & SESSION CONFIG ---
-# Detect production based on common env vars or if it's running behind a secure proxy
-is_prod = (
-    os.getenv('FLASK_ENV') == 'production' or 
-    os.getenv('NODE_ENV') == 'production' or 
-    os.getenv('RAILWAY_ENVIRONMENT') is not None or
-    os.getenv('PROD') == 'true'
-)
-
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'drivesafe-secret-key-12345')
-app.config['SQLALCHEMY_DATABASE_URI'] = get_robust_database_uri()
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_size': 10,
-    'max_overflow': 20,
-    'pool_recycle': 300,
-    'pool_pre_ping': True,
-}
-
-# Session security
-app.config['SESSION_COOKIE_SAMESITE'] = 'None' if is_prod else 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = is_prod
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=7)
-
-# --- COMPONENT INITIALIZATION ---
-db.init_app(app)
-login_manager = LoginManager(app)
-# Supports credentials for cross-origin if needed, though usually same-domain in prod
-CORS(app, supports_credentials=True)
-
-@login_manager.user_loader
-def load_user(user_id):
-    return db.session.get(User, int(user_id))
-
-@login_manager.unauthorized_handler
-def unauthorized():
-    return jsonify({"error": "Unauthorized. Please log in first."}), 401
-
-# Register Blueprints
-from registry_routes import registry_bp
-app.register_blueprint(registry_bp)
-
-# --- SYSTEM ROUTES ---
+# --- DEBUG STATUS ROUTE (ABSOLUTE TOP) ---
 @app.route('/api/debug-status', methods=['GET'])
 def debug_status():
     db_ok = False
-    db_error = None
     try:
         db.session.execute(db.text('SELECT 1'))
         db_ok = True
+    except: pass
+
+    # Test Google API Connectivity
+    drive_api_ok = "Not Tested"
+    try:
+        from registry_sheets import RegistrySheetsService
+        # Check if service account is configured
+        sa_path = os.getenv('SERVICE_ACCOUNT_JSON')
+        if sa_path:
+            svc = RegistrySheetsService(service_account_json_path=sa_path)
+            svc.client.list_spreadsheet_files()
+            drive_api_ok = "Service Account OK"
+        else:
+            drive_api_ok = "No Service Account Env Var"
     except Exception as e:
-        db_error = str(e)
+        drive_api_ok = f"Error: {str(e)}"
 
     return jsonify({
-        "status": "online",
-        "database_connected": db_ok,
-        "database_error": db_error,
-        "is_production": is_prod,
+        "status": "active",
+        "database": "connected" if db_ok else "disconnected",
+        "drive_api_test": drive_api_ok,
         "session_keys": list(session.keys()),
-        "user_authenticated": current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else False,
-        "env_vars": {
-            "SHEET_ID": os.getenv('SHEET_ID') is not None,
-            "SERVICE_ACCOUNT": os.getenv('SERVICE_ACCOUNT_JSON') is not None,
-            "CLIENT_SECRET": os.getenv('GOOGLE_CLIENT_SECRET_JSON') is not None
-        }
+        "path": request.path,
+        "is_prod_detected": os.getenv('NODE_ENV') == 'production' or os.getenv('RAILWAY_ENVIRONMENT') is not None
     })
 
 # --- FRONTEND ROUTES ---
