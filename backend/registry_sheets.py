@@ -26,14 +26,21 @@ COL_RI_PATH = 13
 COL_ERROR = 14
 
 class RegistrySheetsService:
-    def __init__(self, user_credentials, sheet_id=None):
-        self.scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    def __init__(self, user_credentials=None, service_account_json_path=None, sheet_id=None):
+        self.scope = [
+            "https://www.googleapis.com/auth/drive.readonly", 
+            "https://www.googleapis.com/auth/drive.file", 
+            "https://www.googleapis.com/auth/spreadsheets"
+        ]
         self._header_cache = {} # Cache for worksheet headers
         
-        if not user_credentials:
-            raise ValueError("User credentials are required for RegistrySheetsService")
-            
-        self.client = gspread.authorize(user_credentials)
+        if user_credentials:
+            self.client = gspread.authorize(user_credentials)
+        elif service_account_json_path:
+            self.creds = ServiceAccountCredentials.from_json_keyfile_name(service_account_json_path, self.scope)
+            self.client = gspread.authorize(self.creds)
+        else:
+            raise ValueError("No authentication method provided for RegistrySheetsService")
         self.sheet_id = sheet_id
         self.workbook = None
         if sheet_id:

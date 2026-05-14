@@ -42,15 +42,15 @@ def get_services(requested_sheet_id=None, provided_user_creds=None):
     archive_root = os.getenv('ARCHIVE_ROOT', 'Capstone_Archives')
     
     sheets_service = RegistrySheetsService(
-        service_account_json_path=service_account_path if not user_creds else None, 
-        sheet_id=sheet_id,
-        user_credentials=user_creds
+        user_credentials=user_creds,
+        service_account_json_path=service_account_path if not user_creds else None,
+        sheet_id=sheet_id
     )
     
     engine = ArchivalEngine(
-        service_account_json_path=service_account_path if not user_creds else None, 
-        archive_root=archive_root,
-        user_credentials=user_creds
+        user_credentials=user_creds,
+        service_account_json_path=service_account_path if not user_creds else None,
+        archive_root=archive_root
     )
     return sheets_service, engine
 
@@ -63,7 +63,6 @@ def list_sheets():
         user_creds = get_user_creds()
         service_account_path = os.getenv('SERVICE_ACCOUNT_JSON')
         sheets_service = RegistrySheetsService(
-            service_account_json_path=service_account_path if not user_creds else None,
             user_credentials=user_creds
         )
         sheets = sheets_service.list_available_sheets()

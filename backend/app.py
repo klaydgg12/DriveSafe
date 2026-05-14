@@ -117,9 +117,9 @@ def google_auth():
                 "openid", 
                 "email", 
                 "profile", 
-                "https://www.googleapis.com/auth/drive",
-                "https://www.googleapis.com/auth/spreadsheets",
-                "https://spreadsheets.google.com/feeds"
+                "https://www.googleapis.com/auth/drive.readonly",
+                "https://www.googleapis.com/auth/drive.file",
+                "https://www.googleapis.com/auth/spreadsheets"
             ], 
             redirect_uri='postmessage'
         )

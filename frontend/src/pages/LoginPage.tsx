@@ -5,7 +5,7 @@ import Logo from "../components/Logo";
 const LoginPage = () => {
   const googleLogin = useGoogleLogin({
     flow: 'auth-code',
-    scope: "openid email profile https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets https://spreadsheets.google.com/feeds",
+    scope: "openid email profile https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets",
     // @ts-expect-error: prompt is required for consent but not in type
     prompt: 'consent', 
     onSuccess: async (codeResponse) => {
