@@ -20,8 +20,18 @@ LIVE_STATUS_TRACKER = {}
 def get_user_creds():
     token = session.get('access_token')
     if not token:
+        logger.warning("Access token missing from session")
         return None
-    return Credentials(token)
+    try:
+        # Return Credentials with the required scopes
+        return Credentials(token, scopes=[
+            "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/drive.file",
+            "https://www.googleapis.com/auth/spreadsheets"
+        ])
+    except Exception as e:
+        logger.error(f"Failed to create credentials: {e}")
+        return None
 
 def get_services(requested_sheet_id=None, provided_user_creds=None):
     # Priority for Sheet ID
@@ -41,6 +51,7 @@ def get_services(requested_sheet_id=None, provided_user_creds=None):
     service_account_path = os.getenv('SERVICE_ACCOUNT_JSON')
     archive_root = os.getenv('ARCHIVE_ROOT', 'Capstone_Archives')
     
+    # Logic: Use user creds if available, else fallback to service account if it exists
     sheets_service = RegistrySheetsService(
         user_credentials=user_creds,
         service_account_json_path=service_account_path if not user_creds else None,
@@ -60,14 +71,12 @@ def list_sheets():
     if current_user.role != 'teacher':
         return jsonify({"error": "Unauthorized"}), 403
     try:
-        user_creds = get_user_creds()
-        service_account_path = os.getenv('SERVICE_ACCOUNT_JSON')
-        sheets_service = RegistrySheetsService(
-            user_credentials=user_creds
-        )
+        # Use common get_services to ensure consistent auth logic & fallback
+        sheets_service, _ = get_services()
         sheets = sheets_service.list_available_sheets()
         return jsonify(sheets)
     except Exception as e:
+        logger.error(f"List sheets error: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @registry_bp.route('/api/registry/years', methods=['GET'])

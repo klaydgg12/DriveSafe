@@ -96,7 +96,10 @@ const RegistryDashboard: React.FC = () => {
             const res = await axios.get(`/api/registry/list-sheets`, { withCredentials: true });
             setWorkbooks(res.data);
             if (res.data.length > 0) setSelectedWorkbookId(res.data[0].id);
-        } catch { setMessage({ text: "Failed to load Google Sheets.", type: 'error' }); }
+        } catch (err: any) { 
+            const errorMsg = err.response?.data?.error || err.message || "Failed to load Google Sheets.";
+            setMessage({ text: `Failed to fetch workbooks: ${errorMsg}`, type: 'error' }); 
+        }
     };
 
     const fetchYears = async (workbookId: string) => {
