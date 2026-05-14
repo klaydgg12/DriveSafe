@@ -105,13 +105,29 @@ def unauthorized():
 from registry_routes import registry_bp
 app.register_blueprint(registry_bp)
 
-# --- DATABASE INITIALIZATION ---
-@app.before_request
-def create_tables():
-    if not hasattr(app, '_db_initialized'):
-        with app.app_context():
-            db.create_all()
-        app._db_initialized = True
+# --- DEBUG STATUS ROUTE (Must be before frontend catch-all) ---
+@app.route('/api/debug-status', methods=['GET'])
+def debug_status():
+    db_ok = False
+    db_error = None
+    try:
+        db.session.execute(db.text('SELECT 1'))
+        db_ok = True
+    except Exception as e:
+        db_error = str(e)
+
+    return jsonify({
+        "database_connected": db_ok,
+        "database_error": db_error,
+        "session_keys": list(session.keys()),
+        "has_access_token": 'access_token' in session,
+        "user_authenticated": current_user.is_authenticated if hasattr(current_user, 'is_authenticated') else False,
+        "is_production": is_prod,
+        "env_check": {
+            "SHEET_ID": os.getenv('SHEET_ID') is not None,
+            "SERVICE_ACCOUNT_JSON": os.getenv('SERVICE_ACCOUNT_JSON') is not None
+        }
+    })
 
 # --- FRONTEND ROUTES ---
 @app.route('/', defaults={'path': ''})
