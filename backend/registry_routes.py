@@ -390,13 +390,19 @@ def delete_ledger_item(id):
     if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
     try:
         from models import ArchivalLedger, db
+        # Use session.get for SQLAlchemy 2.0 compatibility
         item = db.session.get(ArchivalLedger, id)
-        if not item: return jsonify({"error": "Item not found"}), 404
+        if not item: 
+            logger.warning(f"DELETE FAILED: Item {id} not found in database")
+            return jsonify({"error": "Item not found"}), 404
+        
         db.session.delete(item)
         db.session.commit()
+        logger.info(f"DELETE SUCCESS: Item {id} removed by {current_user.email}")
         return jsonify({"message": "Item deleted successfully"})
     except Exception as e:
-        logger.error(f"DEBUG: delete_ledger_item error: {str(e)}", exc_info=True)
+        db.session.rollback()
+        logger.error(f"DELETE ERROR on item {id}: {str(e)}", exc_info=True)
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 @registry_bp.route('/stats', methods=['GET'])
