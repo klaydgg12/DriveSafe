@@ -205,10 +205,11 @@ def logout():
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve(path):
-    if path.startswith('api/') or path.startswith('auth/'):
-        return jsonify({"error": "API route not found"}), 404
+    # If the request is for an actual file in the static folder, serve it
     if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
         return send_from_directory(app.static_folder, path)
+    # Otherwise, for all other routes (like React SPA routes), serve index.html
+    # This allows React to handle the routing on the frontend
     return send_from_directory(app.static_folder, 'index.html')
 
 from werkzeug.exceptions import HTTPException
