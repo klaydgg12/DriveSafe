@@ -197,6 +197,7 @@ def get_grouped_ledger():
         from models import ArchivalLedger
         from sqlalchemy.orm import defer
         from collections import defaultdict
+        import traceback
         academic_year = request.args.get('year')
         workbook_name = request.args.get('workbook')
         query = ArchivalLedger.query.options(
