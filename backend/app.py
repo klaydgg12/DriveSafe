@@ -27,7 +27,7 @@ from models import db, User, ArchivalLedger
 app = Flask(__name__, static_folder='../frontend/dist')
 
 # Handle proxies (Railway, Render, etc.)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # --- DATABASE CONFIGURATION ---
 def get_robust_database_uri():
