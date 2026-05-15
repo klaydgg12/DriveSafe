@@ -174,6 +174,74 @@ def get_ledger_workbooks():
         logger.error(f"DEBUG: get_ledger_workbooks error: {str(e)}\n{traceback.format_exc()}", exc_info=True)
         return jsonify([])
 
+@registry_bp.route('/api/registry/ledger/tabs', methods=['GET'])
+@login_required
+def get_ledger_tabs():
+    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
+    workbook_name = request.args.get('workbook')
+    try:
+        from models import ArchivalLedger, db
+        query = db.session.query(ArchivalLedger.academic_year)
+        if workbook_name: query = query.filter(ArchivalLedger.workbook_name == workbook_name)
+        years = query.distinct().all()
+        return jsonify([y[0] for y in years if y and y[0]])
+    except Exception as e:
+        logger.error(f"DEBUG: get_ledger_tabs error: {str(e)}\n{traceback.format_exc()}", exc_info=True)
+        return jsonify([])
+
+@registry_bp.route('/api/registry/ledger/grouped', methods=['GET'])
+@login_required
+def get_grouped_ledger():
+    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
+    try:
+        from models import ArchivalLedger
+        from sqlalchemy.orm import defer
+        from collections import defaultdict
+        academic_year = request.args.get('year')
+        workbook_name = request.args.get('workbook')
+        query = ArchivalLedger.query.options(
+            defer(ArchivalLedger.srs_binary), defer(ArchivalLedger.sdd_binary),
+            defer(ArchivalLedger.spmp_binary), defer(ArchivalLedger.std_binary),
+            defer(ArchivalLedger.ri_binary), defer(ArchivalLedger.srs_text),
+            defer(ArchivalLedger.sdd_text), defer(ArchivalLedger.spmp_text),
+            defer(ArchivalLedger.std_text), defer(ArchivalLedger.ri_text)
+        )
+        if academic_year: query = query.filter_by(academic_year=academic_year)
+        if workbook_name: query = query.filter_by(workbook_name=workbook_name)
+        records = query.order_by(ArchivalLedger.id.asc()).all()
+        if not records: return jsonify([])
+        last_hashes = defaultdict(lambda: defaultdict(lambda: None))
+        doc_versions = defaultdict(lambda: defaultdict(int))
+        grouped_data = {}
+        for r in records:
+            project_key = f"{r.project_id}_{r.project_title}"
+            if project_key not in grouped_data:
+                grouped_data[project_key] = {
+                    "project_id": r.project_id, "project_title": r.project_title,
+                    "academic_year": r.academic_year, "workbook_name": r.workbook_name,
+                    "documents": { "srs": [], "sdd": [], "spmp": [], "std": [], "ri": [] }
+                }
+            target = grouped_data[project_key]
+            for doc_type in ["srs", "sdd", "spmp", "std", "ri"]:
+                path = getattr(r, f"{doc_type}_local_path")
+                current_hash = getattr(r, f"{doc_type}_hash")
+                if path and current_hash:
+                    if current_hash != last_hashes[project_key][doc_type]:
+                        last_hashes[project_key][doc_type] = current_hash
+                        doc_versions[project_key][doc_type] += 1
+                        target["documents"][doc_type].append({
+                            "id": r.id, "version": doc_versions[project_key][doc_type],
+                            "hash": current_hash, "timestamp": r.archived_at.strftime("%Y-%m-%d %H:%M:%S") if r.archived_at else None,
+                            "status": r.status
+                        })
+        result = list(grouped_data.values())
+        for project in result:
+            for doc_type in project["documents"]: project["documents"][doc_type].reverse()
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"DEBUG: get_grouped_ledger error: {str(e)}\n{traceback.format_exc()}", exc_info=True)
+        return jsonify([])
+
 @registry_bp.route('/api/registry/validate', methods=['POST'])
 @login_required
 def validate_links():
