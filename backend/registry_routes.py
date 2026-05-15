@@ -84,7 +84,7 @@ def get_services(requested_sheet_id=None, provided_user_creds=None):
 
     return sheets_service, engine
 
-@registry_bp.route('/api/registry/list-sheets', methods=['GET'])
+@registry_bp.route('/list-sheets', methods=['GET'], strict_slashes=False)
 @login_required
 def list_sheets():
     if current_user.role != 'teacher':
@@ -109,7 +109,7 @@ def list_sheets():
             "traceback": traceback.format_exc()
         }), 500
 
-@registry_bp.route('/api/registry/years', methods=['GET'])
+@registry_bp.route('/years', methods=['GET'], strict_slashes=False)
 @login_required
 def get_years():
     if current_user.role != 'teacher':
@@ -127,7 +127,7 @@ def get_years():
         logger.error(f"DEBUG: get_years error: {str(e)}", exc_info=True)
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
-@registry_bp.route('/api/registry/projects', methods=['GET'])
+@registry_bp.route('/projects', methods=['GET'], strict_slashes=False)
 @login_required
 def get_pending():
     if current_user.role != 'teacher':
@@ -160,13 +160,12 @@ def get_pending():
         logger.error(f"Failed to fetch projects: {e}", exc_info=True)
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
-@registry_bp.route('/api/registry/ledger/workbooks', methods=['GET'])
+@registry_bp.route('/ledger/workbooks', methods=['GET'], strict_slashes=False)
 @login_required
 def get_ledger_workbooks():
     if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
     try:
         from models import ArchivalLedger, db
-        import traceback
         workbooks = db.session.query(ArchivalLedger.workbook_name).distinct().all()
         clean_list = sorted(list(set([str(w[0]).strip() for w in workbooks if w and w[0] and str(w[0]).strip()])))
         return jsonify(clean_list)
@@ -174,7 +173,7 @@ def get_ledger_workbooks():
         logger.error(f"DEBUG: get_ledger_workbooks error: {str(e)}\n{traceback.format_exc()}", exc_info=True)
         return jsonify([])
 
-@registry_bp.route('/api/registry/ledger/tabs', methods=['GET'])
+@registry_bp.route('/ledger/tabs', methods=['GET'], strict_slashes=False)
 @login_required
 def get_ledger_tabs():
     if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
@@ -189,7 +188,7 @@ def get_ledger_tabs():
         logger.error(f"DEBUG: get_ledger_tabs error: {str(e)}\n{traceback.format_exc()}", exc_info=True)
         return jsonify([])
 
-@registry_bp.route('/api/registry/ledger/grouped', methods=['GET'])
+@registry_bp.route('/ledger/grouped', methods=['GET'], strict_slashes=False)
 @login_required
 def get_grouped_ledger():
     if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
@@ -197,7 +196,6 @@ def get_grouped_ledger():
         from models import ArchivalLedger
         from sqlalchemy.orm import defer
         from collections import defaultdict
-        import traceback
         academic_year = request.args.get('year')
         workbook_name = request.args.get('workbook')
         query = ArchivalLedger.query.options(
@@ -243,7 +241,7 @@ def get_grouped_ledger():
         logger.error(f"DEBUG: get_grouped_ledger error: {str(e)}\n{traceback.format_exc()}", exc_info=True)
         return jsonify([])
 
-@registry_bp.route('/api/registry/validate', methods=['POST'])
+@registry_bp.route('/validate', methods=['POST'], strict_slashes=False)
 @login_required
 def validate_links():
     if current_user.role != 'teacher':
@@ -276,7 +274,7 @@ def validate_links():
 
     return jsonify(results)
 
-@registry_bp.route('/api/registry/archive', methods=['POST'])
+@registry_bp.route('/archive', methods=['POST'])
 @login_required
 def archive_selected():
     if current_user.role != 'teacher':
@@ -369,7 +367,7 @@ def archive_selected():
     thread.start()
     return jsonify({"message": f"Started archival for {len(projects)} projects."}), 202
 
-@registry_bp.route('/api/registry/reset', methods=['POST'])
+@registry_bp.route('/reset', methods=['POST'])
 @login_required
 def reset_project_status():
     if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
@@ -384,7 +382,7 @@ def reset_project_status():
         return jsonify({"message": "Reset successful"})
     except Exception as e: return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
-@registry_bp.route('/api/registry/stats', methods=['GET'])
+@registry_bp.route('/stats', methods=['GET'])
 @login_required
 def get_stats():
     if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403

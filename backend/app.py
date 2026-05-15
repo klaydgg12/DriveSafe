@@ -89,7 +89,7 @@ def unauthorized():
 
 # Register Registry Blueprint
 from registry_routes import registry_bp
-app.register_blueprint(registry_bp)
+app.register_blueprint(registry_bp, url_prefix='/api/registry')
 
 # --- SYSTEM ROUTES ---
 @app.route('/api/debug-routes')
