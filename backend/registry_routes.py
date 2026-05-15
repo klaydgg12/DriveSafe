@@ -166,12 +166,14 @@ def get_ledger_workbooks():
     if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
     try:
         from models import ArchivalLedger, db
+        import traceback
         workbooks = db.session.query(ArchivalLedger.workbook_name).distinct().all()
         clean_list = sorted(list(set([str(w[0]).strip() for w in workbooks if w and w[0] and str(w[0]).strip()])))
         return jsonify(clean_list)
     except Exception as e:
-        logger.error(f"DEBUG: get_ledger_workbooks error: {str(e)}", exc_info=True)
-        return jsonify([])
+        error_msg = traceback.format_exc()
+        logger.error(f"DEBUG: get_ledger_workbooks error: {str(e)}\n{error_msg}", exc_info=True)
+        return jsonify({"error": str(e), "traceback": error_msg}), 500
 
 @registry_bp.route('/api/registry/validate', methods=['POST'])
 @login_required
