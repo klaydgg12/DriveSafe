@@ -382,6 +382,21 @@ def reset_project_status():
         return jsonify({"message": "Reset successful"})
     except Exception as e: return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
+@registry_bp.route('/ledger/<int:id>', methods=['DELETE'], strict_slashes=False)
+@login_required
+def delete_ledger_item(id):
+    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
+    try:
+        from models import ArchivalLedger, db
+        item = db.session.get(ArchivalLedger, id)
+        if not item: return jsonify({"error": "Item not found"}), 404
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({"message": "Item deleted successfully"})
+    except Exception as e:
+        logger.error(f"DEBUG: delete_ledger_item error: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
 @registry_bp.route('/stats', methods=['GET'])
 @login_required
 def get_stats():
