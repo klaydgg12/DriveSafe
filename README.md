@@ -78,5 +78,38 @@ Ensure that you have a Registry Workbook in your Drive to track. You can use thi
 - **Set Teacher Role:** `python backend/set_teacher.py`
 - **Set Student Role:** `python backend/set_student.py`
 
+## 🌐 Production Deployment (Hostinger VPS)
+
+DriveSafe is deployed on a **Hostinger VPS** using an **Ubuntu** environment.
+
+### 🏛 Architecture
+- **Web Server:** Nginx (acting as a reverse proxy on Port 443).
+- **Application Server:** Waitress (WSGI server running on Port 8080).
+- **Process Manager:** Systemd (managing the `drivesafe.service`).
+- **Database:** MariaDB (Production) with `LONGBLOB` binary storage.
+
+### 🛠 Deployment & Maintenance
+To update the production server with the latest changes from GitHub, SSH into your VPS and run:
+
+```bash
+# 1. Navigate to the backend directory
+cd /var/www/drivesafe/backend
+
+# 2. Force pull the latest code from GitHub
+git fetch origin main
+git reset --hard origin/main
+
+# 3. Restart the system service (This clears ghost processes)
+sudo systemctl restart drivesafe
+
+# 4. Verify the service is running
+sudo systemctl status drivesafe
+```
+
+### 🚨 Critical Troubleshooting
+- **404 Not Found on API:** This usually means the Nginx proxy is misconfigured or the Flask Blueprint registration has a path mismatch. Ensure Nginx `proxy_pass` does not have a trailing slash if the Flask route includes the full path.
+- **Address already in use:** If the service fails to start, use `sudo fuser -k 8080/tcp` to manually kill any stuck processes.
+- **Database Mismatches:** Ensure your `.env` on the VPS has the correct `DATABASE_URL` for the MariaDB instance.
+
 ---
-**© 2025 CEBU INSTITUTE OF TECHNOLOGY UNIVERSITY - College of Computer Studies**
+**© 2025-2026 CEBU INSTITUTE OF TECHNOLOGY UNIVERSITY - College of Computer Studies**
