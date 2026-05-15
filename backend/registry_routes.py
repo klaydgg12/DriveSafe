@@ -171,9 +171,8 @@ def get_ledger_workbooks():
         clean_list = sorted(list(set([str(w[0]).strip() for w in workbooks if w and w[0] and str(w[0]).strip()])))
         return jsonify(clean_list)
     except Exception as e:
-        error_msg = traceback.format_exc()
-        logger.error(f"DEBUG: get_ledger_workbooks error: {str(e)}\n{error_msg}", exc_info=True)
-        return jsonify({"error": str(e), "traceback": error_msg}), 500
+        logger.error(f"DEBUG: get_ledger_workbooks error: {str(e)}\n{traceback.format_exc()}", exc_info=True)
+        return jsonify([])
 
 @registry_bp.route('/api/registry/validate', methods=['POST'])
 @login_required
