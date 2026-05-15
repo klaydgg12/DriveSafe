@@ -92,6 +92,16 @@ from registry_routes import registry_bp
 app.register_blueprint(registry_bp)
 
 # --- SYSTEM ROUTES ---
+@app.route('/api/debug-routes')
+def list_routes():
+    import urllib.parse
+    output = []
+    for rule in app.url_map.iter_rules():
+        methods = ','.join(rule.methods)
+        url = urllib.parse.unquote(str(rule))
+        output.append(f"{methods:20s} {url:50s} {rule.endpoint}")
+    return "<pre>" + "\n".join(sorted(output)) + "</pre>"
+
 @app.route('/api/debug-status', methods=['GET'])
 def debug_status():
     db_ok = False
