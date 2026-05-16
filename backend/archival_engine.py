@@ -330,8 +330,8 @@ class ArchivalEngine:
                                     vectorizer = TfidfVectorizer().fit_transform([file_text, last_text])
                                     vectors = vectorizer.toarray()
                                     similarity = cosine_similarity(vectors)[0][1]
-                                    if similarity > 0.99:
-                                        logger.info(f"AI: {doc_type.upper()} is 99%+ identical.")
+                                    if similarity > 0.999:
+                                        logger.info(f"AI: {doc_type.upper()} is 99.9%+ identical.")
                                         changed = False
                                 except: pass
 
