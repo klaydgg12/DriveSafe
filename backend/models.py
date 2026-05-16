@@ -73,6 +73,7 @@ class ArchivalLedger(db.Model):
     status = db.Column(db.String(50), default='pending')
     version = db.Column(db.Integer, default=1)
     batch_id = db.Column(db.String(50), nullable=True) # Groups projects archived in one click
+    drive_modified_time = db.Column(db.String(100), nullable=True) # Google's internal timestamp
     error_message = db.Column(db.Text, nullable=True)
     archived_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)

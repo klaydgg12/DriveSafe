@@ -276,22 +276,37 @@ class ArchivalEngine:
                     continue
 
                 try:
-                    # 1. GET FRESH METADATA
+                    # 1. GET FRESH METADATA (Source of Truth for ANY modification)
                     metadata = self._get_file_metadata(file_id)
-                    mod_time_raw = metadata.get('modifiedTime', '')
+                    current_drive_ts = metadata.get('modifiedTime', 'Unknown')
                     
-                    logger.info(f"Processing {doc_type.upper()}: Last Modified in Drive: {mod_time_raw}")
+                    logger.info(f"Checking {doc_type.upper()}: Drive Modified Time: {current_drive_ts}")
 
-                    # SYNC GUARD: Google Docs takes a few seconds to update its PDF export
-                    try:
-                        mod_dt = datetime.datetime.fromisoformat(mod_time_raw.replace('Z', '+00:00'))
-                        now_dt = datetime.datetime.now(datetime.timezone.utc)
-                        if (now_dt - mod_dt).total_seconds() < 25:
-                            logger.info(f"Sync Guard: File was recently modified. Waiting 7s for Google PDF sync...")
+                    # 2. TIMESTAMP-LOCKED VERSIONING
+                    # If Google Drive says the file was modified, we ARCHIVE IT. No questions asked.
+                    changed = True
+                    if last_record:
+                        last_stored_ts = last_record.drive_modified_time
+                        
+                        # Compare stored Google timestamp with current Google timestamp
+                        if last_stored_ts == current_drive_ts:
+                            logger.info(f"RESULT: Timestamp matches vault. Skipping.")
+                            changed = False
+                        else:
+                            logger.info(f"RESULT: DRIVE MODIFIED! (Old: {last_stored_ts} -> New: {current_drive_ts}). FORCING NEW VERSION.")
+                            # Wait for Google PDF sync
                             import time
-                            time.sleep(7)
-                    except: pass
+                            time.sleep(10)
 
+                    if not changed:
+                        results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                        results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
+                        results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
+                        results[doc_type]['bin'] = None
+                        processed_file_ids[file_id] = {'source': doc_type, 'data': results[doc_type]}
+                        continue
+
+                    # 3. ARCHIVE THE NEW VERSION
                     doc_dir = os.path.join(base_project_dir, doc_type.upper())
                     os.makedirs(doc_dir, exist_ok=True)
                     
@@ -310,34 +325,12 @@ class ArchivalEngine:
                     if doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'readme']:
                         file_text = self._extract_text_from_pdf(actual_temp_path)
                     results[doc_type]['text'] = file_text
-                    
-                    # 3. ATOMIC VERSIONING (Google-MD5 + Literal Check)
-                    changed = True
-                    if last_record:
-                        # Get Google's own file hash for 100% server-side accuracy
-                        google_md5 = metadata.get('md5Checksum')
-                        last_hash = getattr(last_record, f"{doc_type}_hash")
-                        last_text = getattr(last_record, f"{doc_type}_text") or ""
-
-                        logger.info(f"SENSITIVITY CHECK [{doc_type.upper()}]:")
-                        logger.info(f"  - Google MD5: {google_md5}")
-                        logger.info(f"  - Vault Hash: {last_hash}")
-                        
-                        # If Google says the file is different, OR our text extraction finds a difference
-                        # we trigger a new version. This catches even a single changed space.
-                        if google_md5 == last_hash and last_text == file_text:
-                            logger.info(f"RESULT: No change detected. Skipping.")
-                            changed = False
-                        else:
-                            logger.info(f"RESULT: Change detected (MD5 or Text mismatch). New version triggered.")
 
                     if last_record and file_text:
-                        # 4. Plagiarism Check
+                        # 4. Plagiarism Check (Cross-project)
                         dup_type, score, orig_title, orig_project_id, _ = self.check_for_duplicates(file_hash, file_text, current_project_id=project_id)
                         if dup_type and orig_project_id != project_id:
                             results[doc_type]['dup'] = f"Warning: Similar to {orig_title}"
-                    else:
-                        logger.info(f"AI FAST-TRACK: Skipping cross-project check.")
                     
                     if changed:
                         total_changed += 1
@@ -354,6 +347,7 @@ class ArchivalEngine:
                         final_name = f"{clean_title}_{doc_type.upper()}_v{doc_v}{ext}"
                         final_path = os.path.join(doc_dir, final_name)
                         
+                        # Collision safety
                         v_safe = doc_v
                         while os.path.exists(final_path):
                             v_safe += 1
@@ -361,12 +355,6 @@ class ArchivalEngine:
 
                         os.rename(actual_temp_path, final_path)
                         results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
-                    else:
-                        results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                        results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
-                        results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
-                        results[doc_type]['bin'] = None
-                        if os.path.exists(actual_temp_path): os.remove(actual_temp_path)
                     
                     processed_file_ids[file_id] = {'source': doc_type, 'data': results[doc_type]}
                         
@@ -376,12 +364,22 @@ class ArchivalEngine:
         if total_changed == 0 and last_record:
             return {
                 'status': 'unchanged',
-                'message': 'No changes detected.',
+                'message': 'No changes detected based on Google Drive timestamps.',
                 'version': last_record.version
             }
 
         current_version = (last_record.version if last_record else 0) + 1
         status = "archived" if not error_msg else "failed"
+
+        # Capture the latest Drive timestamp
+        master_drive_ts = "Unknown"
+        for doc in doc_types:
+             link = project_data.get(f'{doc}_link')
+             if link:
+                 meta = self._get_file_metadata(self._extract_file_id(link))
+                 if meta: 
+                     master_drive_ts = meta.get('modifiedTime', 'Unknown')
+                     break
 
         if status == "archived":
             ledger_entry = ArchivalLedger(
@@ -389,6 +387,7 @@ class ArchivalEngine:
                 project_title=project_data.get('project_title'),
                 academic_year=academic_year,
                 workbook_name=workbook_name,
+                drive_modified_time=master_drive_ts, # LOCK THE TIMESTAMP
                 srs_original_url=project_data.get('srs_link'),
                 sdd_original_url=project_data.get('sdd_link'),
                 spmp_original_url=project_data.get('spmp_link'),

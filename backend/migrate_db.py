@@ -34,8 +34,14 @@ def migrate():
                 db.session.execute(text("ALTER TABLE archival_ledger ADD COLUMN batch_id VARCHAR(50) AFTER version"))
                 db.session.commit()
                 logger.info("Migration successful: 'batch_id' column added.")
-            else:
-                logger.info("Column 'batch_id' already exists. Skipping.")
+
+            # Add drive_modified_time column
+            result_mt = db.session.execute(text("SHOW COLUMNS FROM archival_ledger LIKE 'drive_modified_time'")).fetchone()
+            if not result_mt:
+                logger.info("Column 'drive_modified_time' not found. Adding it now...")
+                db.session.execute(text("ALTER TABLE archival_ledger ADD COLUMN drive_modified_time VARCHAR(100) AFTER batch_id"))
+                db.session.commit()
+                logger.info("Migration successful: 'drive_modified_time' column added.")
                 
         except Exception as e:
             logger.error(f"Migration failed: {e}")
