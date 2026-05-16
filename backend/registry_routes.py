@@ -1,6 +1,7 @@
-from flask import Blueprint, jsonify, request, current_app, session, has_request_context
+from flask import Blueprint, jsonify, request, current_app, session, has_request_context, send_file
 from flask_login import login_required, current_user
 import os
+import io
 import requests
 import threading
 import logging
@@ -404,6 +405,53 @@ def delete_ledger_item(id):
         db.session.rollback()
         logger.error(f"DELETE ERROR on item {id}: {str(e)}", exc_info=True)
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+@registry_bp.route('/download/<int:id>/<string:doc_type>', methods=['GET'], strict_slashes=False)
+@login_required
+def download_file(id, doc_type):
+    from models import ArchivalLedger, db
+    
+    # Valid doc types
+    if doc_type not in ['srs', 'sdd', 'spmp', 'std', 'ri']:
+        return jsonify({"error": "Invalid document type"}), 400
+
+    try:
+        # Use session.get for compatibility
+        record = db.session.get(ArchivalLedger, id)
+        if not record:
+            return jsonify({"error": "Record not found"}), 404
+
+        # Determine if it's a preview or download
+        is_preview = request.args.get('preview') == '1'
+        filename = f"{record.project_title}_{doc_type.upper()}.pdf"
+        
+        # 1. Try serving from local file system first (more efficient)
+        local_path_rel = getattr(record, f"{doc_type}_local_path")
+        if local_path_rel:
+            archive_root = os.getenv('ARCHIVE_ROOT', 'Capstone_Archives')
+            full_path = os.path.join(archive_root, local_path_rel)
+            if os.path.exists(full_path):
+                return send_file(
+                    full_path,
+                    mimetype='application/pdf',
+                    as_attachment=not is_preview,
+                    download_name=filename
+                )
+
+        # 2. If local file doesn't exist, try serving from database binary field
+        content = getattr(record, f"{doc_type}_binary")
+        if content:
+            return send_file(
+                io.BytesIO(content),
+                mimetype='application/pdf',
+                as_attachment=not is_preview,
+                download_name=filename
+            )
+
+        return jsonify({"error": "File content not found locally or in database"}), 404
+    except Exception as e:
+        logger.error(f"DOWNLOAD ERROR: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 @registry_bp.route('/stats', methods=['GET'])
 @login_required
