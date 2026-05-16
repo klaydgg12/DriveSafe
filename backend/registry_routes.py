@@ -231,7 +231,7 @@ def get_grouped_ledger():
                         doc_versions[project_key][doc_type] += 1
                         target["documents"][doc_type].append({
                             "id": r.id, "version": doc_versions[project_key][doc_type],
-                            "hash": current_hash, "timestamp": r.archived_at.strftime("%Y-%m-%d %H:%M:%S") if r.archived_at else None,
+                            "hash": current_hash, "timestamp": r.archived_at.isoformat() + 'Z' if r.archived_at else None,
                             "status": r.status
                         })
         result = list(grouped_data.values())

@@ -278,7 +278,16 @@ const ArchiveAnalyticsPage = () => {
                             <Calendar size={14} className="text-slate-400" /> {record.academic_year}
                           </div>
                           <div className="flex items-center gap-1.5 text-slate-500 text-xs font-medium">
-                            <Clock size={14} className="text-slate-400" /> {record.archived_at}
+                            <Clock size={14} className="text-slate-400" /> {new Date(record.archived_at).toLocaleString('en-HK', { 
+                              timeZone: 'Asia/Hong_Kong',
+                              year: 'numeric',
+                              month: 'short',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit',
+                              hour12: true
+                            })}
                           </div>
                         </div>
                       </div>
