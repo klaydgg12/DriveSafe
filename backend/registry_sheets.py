@@ -121,24 +121,23 @@ class RegistrySheetsService:
             for idx, row in enumerate(all_records[1:], start=2):
                 def get_val(key, default=''):
                     if key in col_map and col_map[key] < len(row):
-                        return row[col_map[key]]
+                        return str(row[col_map[key]]).strip() # Added strip() for safety
                     return default
 
                 pid = get_val('project_id')
-                srs = get_val('srs_link')
-                sdd = get_val('sdd_link')
-                spmp = get_val('spmp_link')
-                std = get_val('std_link')
-                ri = get_val('ri_link')
+                # Normalize links: remove spaces and trailing slashes for perfect matching
+                srs = get_val('srs_link').rstrip('/')
+                sdd = get_val('sdd_link').rstrip('/')
+                spmp = get_val('spmp_link').rstrip('/')
+                std = get_val('std_link').rstrip('/')
+                ri = get_val('ri_link').rstrip('/')
 
                 # Skip empty rows (no ID and no links)
                 if not pid and not any([srs, sdd, spmp, std, ri]):
                     continue
 
-                # STRICT DEDUPLICATION LOGIC:
-                # If the LINKS are identical, it's the same project, even if they typed a different Team ID.
-                # We use the combination of links as the primary key.
-                link_fingerprint = f"{srs}|{sdd}|{spmp}|{std}|{ri}"
+                # Create a "Fingerprint" for this row based on normalized links
+                link_fingerprint = f"{srs}|{sdd}|{spmp}|{std}|{ri}".lower()
                 
                 # If they didn't provide links yet, fall back to Project ID
                 dedup_key = link_fingerprint if any([srs, sdd, spmp, std, ri]) else f"ID_{pid}"
