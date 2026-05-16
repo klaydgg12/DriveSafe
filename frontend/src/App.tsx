@@ -6,6 +6,7 @@ import AboutPage from "./pages/AboutPage";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import ArchivalLedgerPage from "./pages/ArchivalLedgerPage";
+import ArchiveAnalyticsPage from "./pages/ArchiveAnalyticsPage";
 import RegistryDashboard from "./pages/RegistryDashboard";
 import { ThemeProvider } from "./context/ThemeContext";
 import "./App.css";
@@ -29,6 +30,8 @@ function App() {
         setCurrentPage("signin");
       } else if (hash === "dashboard") {
         setCurrentPage("dashboard");
+      } else if (hash === "archive-analytics") {
+        setCurrentPage("archive-analytics");
       } else if (hash === "backup-history" || hash === "ledger") {
         setCurrentPage("backup-history");
       } else if (hash === "registry-dashboard") {
@@ -55,6 +58,8 @@ function App() {
         return <LoginPage />;
       case "dashboard":
         return <DashboardPage />;
+      case "archive-analytics":
+        return <ArchiveAnalyticsPage />;
       case "backup-history":
         return <ArchivalLedgerPage />;
       case "registry-dashboard":
