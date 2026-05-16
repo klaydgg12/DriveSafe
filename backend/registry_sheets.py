@@ -80,8 +80,9 @@ class RegistrySheetsService:
         mapping = {}
         # Define keywords to search for in headers
         keywords = {
-            'project_id': ['project id', 'id', 'team id', 'team code', 'id number'],
-            'project_title': ['project title', 'title', 'student name', 'name'],
+            'project_id': ['team code', 'team id', 'id', 'project id', 'id number'],
+            'project_title': ['project title', 'title'], # Primary title
+            'student_name': ['student name', 'name', 'representative'], # Secondary metadata
             'srs_link': ['srs'],
             'sdd_link': ['sdd'],
             'spmp_link': ['spmp'],
