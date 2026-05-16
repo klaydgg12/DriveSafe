@@ -20,36 +20,55 @@ class ArchivalLedger(db.Model):
     project_title = db.Column(db.String(255), nullable=False)
     academic_year = db.Column(db.String(50), nullable=False)
     workbook_name = db.Column(db.String(255), nullable=True, default='Archives')
+    
+    # Original URLs from Google Sheets
     srs_original_url = db.Column(db.String(500), nullable=True)
     sdd_original_url = db.Column(db.String(500), nullable=True)
     spmp_original_url = db.Column(db.String(500), nullable=True)
     std_original_url = db.Column(db.String(500), nullable=True)
     ri_original_url = db.Column(db.String(500), nullable=True)
+    source_code_original_url = db.Column(db.String(500), nullable=True)
+    github_original_url = db.Column(db.String(500), nullable=True)
+    database_original_url = db.Column(db.String(500), nullable=True)
+    readme_original_url = db.Column(db.String(500), nullable=True)
 
+    # Local storage paths
     srs_local_path = db.Column(db.String(500), nullable=True)
     sdd_local_path = db.Column(db.String(500), nullable=True)
     spmp_local_path = db.Column(db.String(500), nullable=True)
     std_local_path = db.Column(db.String(500), nullable=True)
     ri_local_path = db.Column(db.String(500), nullable=True)
+    source_code_local_path = db.Column(db.String(500), nullable=True)
+    database_local_path = db.Column(db.String(500), nullable=True)
+    readme_local_path = db.Column(db.String(500), nullable=True)
 
+    # File Hashes (SHA-256)
     srs_hash = db.Column(db.String(64), nullable=True)
     sdd_hash = db.Column(db.String(64), nullable=True)
     spmp_hash = db.Column(db.String(64), nullable=True)
     std_hash = db.Column(db.String(64), nullable=True)
     ri_hash = db.Column(db.String(64), nullable=True)
+    source_code_hash = db.Column(db.String(64), nullable=True)
+    database_hash = db.Column(db.String(64), nullable=True)
+    readme_hash = db.Column(db.String(64), nullable=True)
 
+    # Binary Data (LONGBLOB)
     srs_binary = db.Column(db.LargeBinary(length=(2**32)-1), nullable=True)
     sdd_binary = db.Column(db.LargeBinary(length=(2**32)-1), nullable=True)
     spmp_binary = db.Column(db.LargeBinary(length=(2**32)-1), nullable=True)
     std_binary = db.Column(db.LargeBinary(length=(2**32)-1), nullable=True)
     ri_binary = db.Column(db.LargeBinary(length=(2**32)-1), nullable=True)
+    source_code_binary = db.Column(db.LargeBinary(length=(2**32)-1), nullable=True)
+    database_binary = db.Column(db.LargeBinary(length=(2**32)-1), nullable=True)
+    readme_binary = db.Column(db.LargeBinary(length=(2**32)-1), nullable=True)
 
-    # AI Cache Columns
+    # AI Text Content for deduplication
     srs_text = db.Column(db.Text, nullable=True)
     sdd_text = db.Column(db.Text, nullable=True)
     spmp_text = db.Column(db.Text, nullable=True)
     std_text = db.Column(db.Text, nullable=True)
     ri_text = db.Column(db.Text, nullable=True)
+    readme_text = db.Column(db.Text, nullable=True)
 
     status = db.Column(db.String(50), default='pending')
     version = db.Column(db.Integer, default=1)

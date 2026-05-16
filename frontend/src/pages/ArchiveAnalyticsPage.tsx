@@ -46,7 +46,7 @@ const ArchiveAnalyticsPage = () => {
         // Collect all versions from all document types for this project
         const allVersions: any[] = [];
         
-        ['srs', 'sdd', 'spmp', 'std', 'ri'].forEach(type => {
+        ['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'database', 'readme'].forEach(type => {
           if (project.documents[type]) {
             project.documents[type].forEach((v: any) => {
               allVersions.push({
@@ -231,6 +231,9 @@ const ArchiveAnalyticsPage = () => {
                 <option value="SPMP">SPMP Only</option>
                 <option value="STD">STD Only</option>
                 <option value="RI">RI Only</option>
+                <option value="SOURCE_CODE">Source Code Only</option>
+                <option value="DATABASE">Database Only</option>
+                <option value="README">ReadMe Only</option>
               </select>
             </div>
           </div>

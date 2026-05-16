@@ -31,6 +31,9 @@ interface ProjectGroup {
     spmp: Version[]; 
     std: Version[]; 
     ri: Version[]; 
+    source_code: Version[];
+    database: Version[];
+    readme: Version[];
   };
 }
 
@@ -144,6 +147,9 @@ const ArchivalLedgerPage = () => {
     if (t === 'spmp') return { text: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-100", icon: <BarChart3 size={16} /> };
     if (t === 'std') return { text: "text-amber-600", bg: "bg-amber-50", border: "border-amber-100", icon: <ClipboardCheck size={16} /> };
     if (t === 'ri') return { text: "text-rose-600", bg: "bg-rose-50", border: "border-rose-100", icon: <FileSearch size={16} /> };
+    if (t === 'source_code') return { text: "text-orange-600", bg: "bg-orange-50", border: "border-orange-100", icon: <Code size={16} /> };
+    if (t === 'database') return { text: "text-cyan-600", bg: "bg-cyan-50", border: "border-cyan-100", icon: <Layers size={16} /> };
+    if (t === 'readme') return { text: "text-slate-600", bg: "bg-slate-50", border: "border-slate-100", icon: <FileText size={16} /> };
     return { text: "text-gray-600", bg: "bg-gray-50", border: "border-gray-100", icon: <FileText size={16} /> };
   };
 

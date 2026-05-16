@@ -28,6 +28,10 @@ interface Project {
     spmp_link: string;
     std_link: string;
     ri_link: string;
+    source_code_link: string;
+    github_link: string;
+    database_link: string;
+    readme_link: string;
     status: string;
     academic_year: string;
     latest_version?: number;
@@ -152,7 +156,10 @@ const RegistryDashboard: React.FC = () => {
     };
 
     const validateLinks = async () => {
-        const linksToValidate = projects.flatMap(p => [p.srs_link, p.sdd_link, p.spmp_link, p.std_link, p.ri_link]).filter(l => l);
+        const linksToValidate = projects.flatMap(p => [
+            p.srs_link, p.sdd_link, p.spmp_link, p.std_link, p.ri_link,
+            p.source_code_link, p.github_link, p.database_link, p.readme_link
+        ]).filter(l => l);
         if (linksToValidate.length === 0) return;
         setLoading(true);
         try {
@@ -450,13 +457,17 @@ const RegistryDashboard: React.FC = () => {
                                                 </div>
                                             </td>
                                             <td className="px-4 py-4">
-                                                <div className="flex items-center gap-1.5">
+                                                <div className="flex flex-wrap items-center gap-1.5 max-w-[400px]">
                                                     {[
                                                         { id: 'srs', label: 'SRS', color: 'blue' },
                                                         { id: 'sdd', label: 'SDD', color: 'purple' },
                                                         { id: 'spmp', label: 'SPMP', color: 'emerald' },
                                                         { id: 'std', label: 'STD', color: 'amber' },
-                                                        { id: 'ri', label: 'RI', color: 'rose' }
+                                                        { id: 'ri', label: 'RI', color: 'rose' },
+                                                        { id: 'source_code', label: 'SRC', color: 'orange' },
+                                                        { id: 'github', label: 'GH', color: 'slate' },
+                                                        { id: 'database', label: 'DB', color: 'cyan' },
+                                                        { id: 'readme', label: 'RM', color: 'gray' }
                                                     ].map(doc => {
                                                         const link = p[`${doc.id}_link` as keyof Project] as string;
                                                         const isAccessible = validationResults[link] === 'Accessible';
@@ -467,7 +478,11 @@ const RegistryDashboard: React.FC = () => {
                                                             purple: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-purple-50 border-purple-100 text-purple-600 hover:bg-purple-100' : 'bg-white border-slate-200 text-slate-400 hover:border-purple-300 hover:text-purple-600',
                                                             emerald: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-emerald-50 border-emerald-100 text-emerald-600 hover:bg-emerald-100' : 'bg-white border-slate-200 text-slate-400 hover:border-emerald-300 hover:text-emerald-600',
                                                             amber: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-amber-50 border-amber-100 text-amber-600 hover:bg-amber-100' : 'bg-white border-slate-200 text-slate-400 hover:border-amber-300 hover:text-amber-600',
-                                                            rose: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-rose-50 border-rose-100 text-rose-600 hover:bg-rose-100' : 'bg-white border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-600'
+                                                            rose: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-rose-50 border-rose-100 text-rose-600 hover:bg-rose-100' : 'bg-white border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-600',
+                                                            orange: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-orange-50 border-orange-100 text-orange-600 hover:bg-orange-100' : 'bg-white border-slate-200 text-slate-400 hover:border-orange-300 hover:text-orange-600',
+                                                            slate: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-700',
+                                                            cyan: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-cyan-50 border-cyan-100 text-cyan-600 hover:bg-cyan-100' : 'bg-white border-slate-200 text-slate-400 hover:border-cyan-300 hover:text-cyan-600',
+                                                            gray: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-slate-50 border-slate-100 text-slate-600 hover:bg-slate-100' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-600'
                                                         };
 
                                                         return (

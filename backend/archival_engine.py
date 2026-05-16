@@ -249,14 +249,12 @@ class ArchivalEngine:
             status='archived'
         ).order_by(ArchivalLedger.version.desc()).first()
         
-        doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri']
+        doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'database', 'readme']
         results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': None} for dt in doc_types}
         error_msg = ""
         total_changed = 0
 
         # --- TEAM-LEVEL LINK DEDUPLICATION ---
-        # Map file IDs to their processed results to avoid downloading the same file twice
-        # if multiple document types point to the same Google Drive file.
         processed_file_ids = {}
 
         # 2. Process each document
@@ -266,7 +264,6 @@ class ArchivalEngine:
             file_id = self._extract_file_id(link)
             
             if file_id:
-                # If this specific file ID was already processed in this session (e.g. SRS and SDD are same link)
                 if file_id in processed_file_ids:
                     logger.info(f"Team Deduplication: {doc_type.upper()} uses same link as {processed_file_ids[file_id]['source']}. Reusing results.")
                     res = processed_file_ids[file_id]['data']
@@ -278,7 +275,6 @@ class ArchivalEngine:
                     continue
 
                 try:
-                    # --- TURBO METADATA OPTIMIZATION ---
                     metadata = self._get_file_metadata(file_id)
                     if not metadata:
                         raise Exception("Could not reach Google Drive for metadata.")
@@ -298,12 +294,9 @@ class ArchivalEngine:
                         results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                         results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
                         results[doc_type]['bin'] = None
-                        # Cache for team-level deduplication
                         processed_file_ids[file_id] = {'source': doc_type, 'data': results[doc_type]}
                         continue
-                    # --- END TURBO OPTIMIZATION ---
 
-                    # Proceed with download if changed
                     doc_dir = os.path.join(base_project_dir, doc_type.upper())
                     os.makedirs(doc_dir, exist_ok=True)
                     
@@ -317,11 +310,12 @@ class ArchivalEngine:
                     file_hash = self._compute_hash(actual_temp_path)
                     results[doc_type]['hash'] = file_hash
                     
-                    # AI Text Extraction
-                    file_text = self._extract_text_from_pdf(actual_temp_path)
+                    # AI Text Extraction (Only for relevant types)
+                    file_text = ""
+                    if doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'readme']:
+                        file_text = self._extract_text_from_pdf(actual_temp_path)
                     results[doc_type]['text'] = file_text
                     
-                    # 3. Check if this specific file changed compared to the last version
                     changed = True
                     if last_record:
                         last_hash = getattr(last_record, f"{doc_type}_hash")
@@ -329,35 +323,26 @@ class ArchivalEngine:
                             logger.info(f"Hash Match: {doc_type.upper()} is identical. No new version.")
                             changed = False
                         else:
-                            # If hash differs, check AI similarity
                             last_text = getattr(last_record, f"{doc_type}_text")
                             if file_text and last_text:
                                 try:
                                     vectorizer = TfidfVectorizer().fit_transform([file_text, last_text])
                                     vectors = vectorizer.toarray()
                                     similarity = cosine_similarity(vectors)[0][1]
-                                    logger.info(f"AI Similarity for {doc_type.upper()}: {similarity:.4f}")
                                     if similarity > 0.99:
-                                        logger.info(f"AI: {doc_type.upper()} is 99%+ identical. Re-using last version.")
+                                        logger.info(f"AI: {doc_type.upper()} is 99%+ identical.")
                                         changed = False
                                 except: pass
 
-                    # 4. Plagiarism Check (ONLY ON 2ND SESSION ONWARDS)
-                    # If this is the FIRST time this project is being archived (no last_record),
-                    # we skip the AI check against other projects to save time.
-                    if last_record:
+                    if last_record and file_text:
                         dup_type, score, orig_title, orig_project_id, _ = self.check_for_duplicates(file_hash, file_text, current_project_id=project_id)
                         if dup_type and orig_project_id != project_id:
-                            logger.warning(f"PLAGIARISM: {doc_type.upper()} matches '{orig_title}'")
                             results[doc_type]['dup'] = f"Warning: Similar to {orig_title}"
-                    else:
-                        logger.info(f"AI FAST-TRACK: Skipping cross-project check for initial archival.")
                     
                     if changed:
                         total_changed += 1
                         results[doc_type]['is_changed'] = True
                         
-                        # Calculate per-document version correctly
                         from sqlalchemy import func
                         prev_doc_versions = db.session.query(func.count(ArchivalLedger.id)).filter(
                             ArchivalLedger.project_id == project_id,
@@ -369,7 +354,6 @@ class ArchivalEngine:
                         final_name = f"{clean_title}_{doc_type.upper()}_v{doc_v}{ext}"
                         final_path = os.path.join(doc_dir, final_name)
                         
-                        # Collision safety
                         v_safe = doc_v
                         while os.path.exists(final_path):
                             v_safe += 1
@@ -377,7 +361,6 @@ class ArchivalEngine:
 
                         os.rename(actual_temp_path, final_path)
                         results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
-                        results[doc_type]['bin'] = file_binary if len(file_binary) < 16*1024*1024 else None
                     else:
                         results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                         results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
@@ -385,18 +368,15 @@ class ArchivalEngine:
                         results[doc_type]['bin'] = None
                         if os.path.exists(actual_temp_path): os.remove(actual_temp_path)
                     
-                    # Cache for team-level deduplication
                     processed_file_ids[file_id] = {'source': doc_type, 'data': results[doc_type]}
                         
                 except Exception as e:
                     error_msg += f"{doc_type.upper()} Error: {str(e)}; "
 
-        # 4. Final Decision: Save new version only if at least one file changed OR no previous record exists
         if total_changed == 0 and last_record:
-            logger.info(f"No changes detected for project {project_title}. Skipping version increment.")
             return {
                 'status': 'unchanged',
-                'message': 'No changes detected (all files are semantically identical to latest version).',
+                'message': 'No changes detected.',
                 'version': last_record.version
             }
 
@@ -414,28 +394,44 @@ class ArchivalEngine:
                 spmp_original_url=project_data.get('spmp_link'),
                 std_original_url=project_data.get('std_link'),
                 ri_original_url=project_data.get('ri_link'),
+                source_code_original_url=project_data.get('source_code_link'),
+                github_original_url=project_data.get('github_link'),
+                database_original_url=project_data.get('database_link'),
+                readme_original_url=project_data.get('readme_link'),
+
                 srs_local_path=results['srs']['path'],
                 sdd_local_path=results['sdd']['path'],
                 spmp_local_path=results['spmp']['path'],
                 std_local_path=results['std']['path'],
                 ri_local_path=results['ri']['path'],
+                source_code_local_path=results['source_code']['path'],
+                database_local_path=results['database']['path'],
+                readme_local_path=results['readme']['path'],
+
                 srs_hash=results['srs']['hash'],
                 sdd_hash=results['sdd']['hash'],
                 spmp_hash=results['spmp']['hash'],
                 std_hash=results['std']['hash'],
                 ri_hash=results['ri']['hash'],
+                source_code_hash=results['source_code']['hash'],
+                database_hash=results['database']['hash'],
+                readme_hash=results['readme']['hash'],
+
                 srs_binary=results['srs']['bin'],
                 sdd_binary=results['sdd']['bin'],
                 spmp_binary=results['spmp']['bin'],
                 std_binary=results['std']['bin'],
                 ri_binary=results['ri']['bin'],
+                source_code_binary=results['source_code']['bin'],
+                database_binary=results['database']['bin'],
+                readme_binary=results['readme']['bin'],
                 
-                # AI Cache Storage
                 srs_text=results['srs'].get('text'),
                 sdd_text=results['sdd'].get('text'),
                 spmp_text=results['spmp'].get('text'),
                 std_text=results['std'].get('text'),
                 ri_text=results['ri'].get('text'),
+                readme_text=results['readme'].get('text'),
 
                 status=status,
                 version=current_version,

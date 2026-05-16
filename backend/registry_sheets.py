@@ -80,20 +80,27 @@ class RegistrySheetsService:
         mapping = {}
         # Define keywords to search for in headers
         keywords = {
-            'project_id': ['project id', 'id', 'team id', 'team_id'],
-            'project_title': ['project title', 'title', 'project_title'],
-            'srs_link': ['srs link', 'srs', 'srs_link'],
-            'sdd_link': ['sdd link', 'sdd', 'sdd_link'],
-            'spmp_link': ['spmp link', 'spmp', 'spmp_link'],
-            'std_link': ['std link', 'std', 'std_link'],
-            'ri_link': ['ri link', 'ri', 'ri_link', 'requirements inventory'],
+            'project_id': ['project id', 'id', 'team id', 'team code', 'id number'],
+            'project_title': ['project title', 'title', 'student name', 'name'],
+            'srs_link': ['srs'],
+            'sdd_link': ['sdd'],
+            'spmp_link': ['spmp'],
+            'std_link': ['std'],
+            'ri_link': ['ri link', 'ri', 'requirements inventory'],
+            'source_code_link': ['source code (zipped)', 'source code', 'zipped'],
+            'github_link': ['github'],
+            'database_link': ['exported / dumped database', 'database', 'dump'],
+            'readme_link': ['readme'],
             'status': ['status'],
-            'last_updated': ['last updated', 'updated at', 'timestamp'],
+            'last_updated': ['timestamp', 'last updated', 'updated at'],
             'srs_path': ['srs path', 'srs_local'],
             'sdd_path': ['sdd path', 'sdd_local'],
             'spmp_path': ['spmp path', 'spmp_local'],
             'std_path': ['std path', 'std_local'],
             'ri_path': ['ri path', 'ri_local'],
+            'source_code_path': ['source_code_local'],
+            'database_path': ['database_local'],
+            'readme_path': ['readme_local'],
             'error': ['error', 'message', 'error message']
         }
 
@@ -131,16 +138,20 @@ class RegistrySheetsService:
                 spmp = get_val('spmp_link').rstrip('/')
                 std = get_val('std_link').rstrip('/')
                 ri = get_val('ri_link').rstrip('/')
+                src = get_val('source_code_link').rstrip('/')
+                gh = get_val('github_link').rstrip('/')
+                db_link = get_val('database_link').rstrip('/')
+                readme = get_val('readme_link').rstrip('/')
 
                 # Skip empty rows (no ID and no links)
-                if not pid and not any([srs, sdd, spmp, std, ri]):
+                if not pid and not any([srs, sdd, spmp, std, ri, src, gh, db_link, readme]):
                     continue
 
                 # Create a "Fingerprint" for this row based on normalized links
-                link_fingerprint = f"{srs}|{sdd}|{spmp}|{std}|{ri}".lower()
+                link_fingerprint = f"{srs}|{sdd}|{spmp}|{std}|{ri}|{src}|{gh}|{db_link}|{readme}".lower()
                 
                 # If they didn't provide links yet, fall back to Project ID
-                dedup_key = link_fingerprint if any([srs, sdd, spmp, std, ri]) else f"ID_{pid}"
+                dedup_key = link_fingerprint if any([srs, sdd, spmp, std, ri, src, gh, db_link, readme]) else f"ID_{pid}"
                 
                 project = {
                     'row_index': idx,
@@ -151,6 +162,10 @@ class RegistrySheetsService:
                     'spmp_link': spmp,
                     'std_link': std,
                     'ri_link': ri,
+                    'source_code_link': src,
+                    'github_link': gh,
+                    'database_link': db_link,
+                    'readme_link': readme,
                     'status': get_val('status', 'Pending'),
                     'academic_year': sheet_name
                 }
@@ -184,6 +199,9 @@ class RegistrySheetsService:
         add_update('spmp_path', kwargs.get('spmp_path'))
         add_update('std_path', kwargs.get('std_path'))
         add_update('ri_path', kwargs.get('ri_path'))
+        add_update('source_code_path', kwargs.get('source_code_path'))
+        add_update('database_path', kwargs.get('database_path'))
+        add_update('readme_path', kwargs.get('readme_path'))
         add_update('error', kwargs.get('error_msg'))
         
         if updates:
@@ -219,6 +237,9 @@ class RegistrySheetsService:
             add_to_batch('spmp_path', kwargs.get('spmp_path'))
             add_to_batch('std_path', kwargs.get('std_path'))
             add_to_batch('ri_path', kwargs.get('ri_path'))
+            add_to_batch('source_code_path', kwargs.get('source_code_path'))
+            add_to_batch('database_path', kwargs.get('database_path'))
+            add_to_batch('readme_path', kwargs.get('readme_path'))
             add_to_batch('error', kwargs.get('error_msg'))
 
         if all_updates:

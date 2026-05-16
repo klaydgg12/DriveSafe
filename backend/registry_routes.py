@@ -202,9 +202,11 @@ def get_grouped_ledger():
         query = ArchivalLedger.query.options(
             defer(ArchivalLedger.srs_binary), defer(ArchivalLedger.sdd_binary),
             defer(ArchivalLedger.spmp_binary), defer(ArchivalLedger.std_binary),
-            defer(ArchivalLedger.ri_binary), defer(ArchivalLedger.srs_text),
-            defer(ArchivalLedger.sdd_text), defer(ArchivalLedger.spmp_text),
-            defer(ArchivalLedger.std_text), defer(ArchivalLedger.ri_text)
+            defer(ArchivalLedger.ri_binary), defer(ArchivalLedger.source_code_binary),
+            defer(ArchivalLedger.database_binary), defer(ArchivalLedger.readme_binary),
+            defer(ArchivalLedger.srs_text), defer(ArchivalLedger.sdd_text), 
+            defer(ArchivalLedger.spmp_text), defer(ArchivalLedger.std_text), 
+            defer(ArchivalLedger.ri_text), defer(ArchivalLedger.readme_text)
         )
         if academic_year: query = query.filter_by(academic_year=academic_year)
         if workbook_name: query = query.filter_by(workbook_name=workbook_name)
@@ -219,10 +221,13 @@ def get_grouped_ledger():
                 grouped_data[project_key] = {
                     "project_id": r.project_id, "project_title": r.project_title,
                     "academic_year": r.academic_year, "workbook_name": r.workbook_name,
-                    "documents": { "srs": [], "sdd": [], "spmp": [], "std": [], "ri": [] }
+                    "documents": { 
+                        "srs": [], "sdd": [], "spmp": [], "std": [], "ri": [],
+                        "source_code": [], "database": [], "readme": [] 
+                    }
                 }
             target = grouped_data[project_key]
-            for doc_type in ["srs", "sdd", "spmp", "std", "ri"]:
+            for doc_type in ["srs", "sdd", "spmp", "std", "ri", "source_code", "database", "readme"]:
                 path = getattr(r, f"{doc_type}_local_path")
                 current_hash = getattr(r, f"{doc_type}_hash")
                 if path and current_hash:
@@ -340,7 +345,9 @@ def archive_selected():
                             'sheet_name': p['academic_year'], 'row_index': p['row_index'], 'status': status,
                             'kwargs': {
                                 'srs_path': paths.get('srs'), 'sdd_path': paths.get('sdd'), 'spmp_path': paths.get('spmp'),
-                                'std_path': paths.get('std'), 'ri_path': paths.get('ri'), 'error_msg': result.get('error')
+                                'std_path': paths.get('std'), 'ri_path': paths.get('ri'), 
+                                'source_code_path': paths.get('source_code'), 'database_path': paths.get('database'), 
+                                'readme_path': paths.get('readme'), 'error_msg': result.get('error')
                             }
                         }
                     except Exception as e:
@@ -415,7 +422,7 @@ def download_file(id, doc_type):
     from models import ArchivalLedger, db
     
     # Valid doc types
-    if doc_type not in ['srs', 'sdd', 'spmp', 'std', 'ri']:
+    if doc_type not in ['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'database', 'readme']:
         return jsonify({"error": "Invalid document type"}), 400
 
     try:
