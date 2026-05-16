@@ -128,11 +128,15 @@ class RegistrySheetsService:
             for idx, row in enumerate(all_records[1:], start=2):
                 def get_val(key, default=''):
                     if key in col_map and col_map[key] < len(row):
-                        return str(row[col_map[key]]).strip() # Added strip() for safety
+                        val = str(row[col_map[key]]).strip()
+                        # Ignore placeholder instruction text
+                        if "copy & paste" in val.lower() or "filename:" in val.lower():
+                            return default
+                        return val
                     return default
 
                 pid = get_val('project_id')
-                # Normalize links: remove spaces and trailing slashes for perfect matching
+                name = get_val('project_title')
                 srs = get_val('srs_link').rstrip('/')
                 sdd = get_val('sdd_link').rstrip('/')
                 spmp = get_val('spmp_link').rstrip('/')
@@ -143,20 +147,28 @@ class RegistrySheetsService:
                 db_link = get_val('database_link').rstrip('/')
                 readme = get_val('readme_link').rstrip('/')
 
-                # Skip empty rows (no ID and no links)
-                if not pid and not any([srs, sdd, spmp, std, ri, src, gh, db_link, readme]):
+                # --- GHOST ROW FILTER ---
+                # Skip row if it is totally empty (no ID, no Name, and no Links)
+                has_links = any([srs, sdd, spmp, std, ri, src, gh, db_link, readme])
+                if not pid and not name and not has_links:
                     continue
+
+                # --- SMART TITLE FALLBACK ---
+                # If name is empty, use Team Code. If both empty, use Team [ID]
+                display_title = name
+                if not display_title or display_title.lower() == 'untitled':
+                    display_title = pid if pid else f"Team_{idx}"
 
                 # Create a "Fingerprint" for this row based on normalized links
                 link_fingerprint = f"{srs}|{sdd}|{spmp}|{std}|{ri}|{src}|{gh}|{db_link}|{readme}".lower()
                 
                 # If they didn't provide links yet, fall back to Project ID
-                dedup_key = link_fingerprint if any([srs, sdd, spmp, std, ri, src, gh, db_link, readme]) else f"ID_{pid}"
+                dedup_key = link_fingerprint if has_links else f"ID_{pid}_{idx}"
                 
                 project = {
                     'row_index': idx,
                     'project_id': pid or "N/A",
-                    'project_title': get_val('project_title', 'Untitled'),
+                    'project_title': display_title,
                     'srs_link': srs,
                     'sdd_link': sdd,
                     'spmp_link': spmp,
