@@ -107,7 +107,7 @@ class RegistrySheetsService:
         return mapping
 
     def get_all_projects(self, sheet_name):
-        """Fetch all rows using dynamic header mapping and filter duplicates by project_id"""
+        """Fetch all rows using dynamic header mapping and filter duplicates by ID and Links"""
         try:
             worksheet = self.workbook.worksheet(sheet_name)
             all_records = worksheet.get_all_values()
@@ -115,7 +115,7 @@ class RegistrySheetsService:
 
             col_map = self._get_header_map(worksheet)
             
-            # Dictionary to keep the latest entry for each project_id
+            # Dictionary to keep the latest entry for each project
             unique_projects = {}
             
             for idx, row in enumerate(all_records[1:], start=2):
@@ -125,25 +125,39 @@ class RegistrySheetsService:
                     return default
 
                 pid = get_val('project_id')
-                if not pid:
-                    pid = f"TEMP_{idx}" # Handle empty IDs by making them unique to the row
+                srs = get_val('srs_link')
+                sdd = get_val('sdd_link')
+                spmp = get_val('spmp_link')
+                std = get_val('std_link')
+                ri = get_val('ri_link')
+
+                # Create a "Fingerprint" for this row based on links to detect identical submissions
+                # This ensures that if 2 members submit the same links, they show as 1 project.
+                link_fingerprint = f"{srs}|{sdd}|{spmp}|{std}|{ri}"
+                
+                # Deduplication Key: Combination of Team ID and their submitted links
+                # If either the ID is the same OR the links are exactly the same, they are merged.
+                dedup_key = pid if pid else f"LINK_SIG_{link_fingerprint}"
+                
+                if not pid and not any([srs, sdd, spmp, std, ri]):
+                    continue # Skip empty rows
 
                 project = {
                     'row_index': idx,
-                    'project_id': pid,
+                    'project_id': pid or "N/A",
                     'project_title': get_val('project_title', 'Untitled'),
-                    'srs_link': get_val('srs_link'),
-                    'sdd_link': get_val('sdd_link'),
-                    'spmp_link': get_val('spmp_link'),
-                    'std_link': get_val('std_link'),
-                    'ri_link': get_val('ri_link'),
+                    'srs_link': srs,
+                    'sdd_link': sdd,
+                    'spmp_link': spmp,
+                    'std_link': std,
+                    'ri_link': ri,
                     'status': get_val('status', 'Pending'),
                     'academic_year': sheet_name
                 }
                 
-                # If project_id already exists, this will overwrite it with the latest row
-                # This ensures the "Registry Pipeline" only shows one entry per Project ID
-                unique_projects[pid] = project
+                # If a project with this ID or these specific links already exists, 
+                # overwrite it with this newer row (the one further down in the sheet).
+                unique_projects[dedup_key] = project
                 
             # Convert dictionary back to a sorted list based on original row order
             return sorted(unique_projects.values(), key=lambda x: x['row_index'])
