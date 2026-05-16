@@ -335,9 +335,13 @@ class ArchivalEngine:
                                 except: pass
 
                     if last_record and file_text:
+                        # 4. Plagiarism Check (ONLY ON 2ND SESSION ONWARDS)
+                        # Skip cross-project check for initial archival to save time
                         dup_type, score, orig_title, orig_project_id, _ = self.check_for_duplicates(file_hash, file_text, current_project_id=project_id)
                         if dup_type and orig_project_id != project_id:
                             results[doc_type]['dup'] = f"Warning: Similar to {orig_title}"
+                    else:
+                        logger.info(f"AI FAST-TRACK: Skipping cross-project check for initial archival.")
                     
                     if changed:
                         total_changed += 1

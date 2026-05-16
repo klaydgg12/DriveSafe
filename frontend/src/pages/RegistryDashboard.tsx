@@ -238,7 +238,7 @@ const RegistryDashboard: React.FC = () => {
         return filteredAndSortedProjects.slice(startIndex, startIndex + projectsPerPage);
     }, [filteredAndSortedProjects, currentPage]);
 
-    const getStatusBadge = (status: string) => {
+    const getStatusBadge = (status: string, version?: number) => {
         const s = status.toLowerCase();
         let classes = "bg-gray-100 text-gray-600";
         if (s === 'pending') classes = "bg-amber-100 text-amber-700 ring-1 ring-amber-200";
@@ -248,7 +248,7 @@ const RegistryDashboard: React.FC = () => {
 
         return (
             <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${classes}`}>
-                {status}
+                {status} {version && version > 0 ? `v${version}` : ''}
             </span>
         );
     };
@@ -504,7 +504,7 @@ const RegistryDashboard: React.FC = () => {
                                             </td>
                                             <td className="px-6 py-4 text-right">
                                                 <div className="flex items-center justify-end gap-3 group/status">
-                                                    {getStatusBadge(p.status)}
+                                                    {getStatusBadge(p.status, p.latest_version)}
                                                     {(p.status.toLowerCase() === 'archived' || p.status.toLowerCase() === 'failed') && (
                                                         <button 
                                                             onClick={(e) => { e.stopPropagation(); handleReset(p); }}
