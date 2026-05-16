@@ -107,7 +107,7 @@ class RegistrySheetsService:
         return mapping
 
     def get_all_projects(self, sheet_name):
-        """Fetch all rows using dynamic header mapping and filter duplicates by ID and Links"""
+        """Fetch all rows using dynamic header mapping and filter duplicates by Links primarily"""
         try:
             worksheet = self.workbook.worksheet(sheet_name)
             all_records = worksheet.get_all_values()
@@ -115,7 +115,7 @@ class RegistrySheetsService:
 
             col_map = self._get_header_map(worksheet)
             
-            # Dictionary to keep the latest entry for each project
+            # Dictionary to keep the latest entry for each unique submission
             unique_projects = {}
             
             for idx, row in enumerate(all_records[1:], start=2):
@@ -131,17 +131,18 @@ class RegistrySheetsService:
                 std = get_val('std_link')
                 ri = get_val('ri_link')
 
-                # Create a "Fingerprint" for this row based on links to detect identical submissions
-                # This ensures that if 2 members submit the same links, they show as 1 project.
+                # Skip empty rows (no ID and no links)
+                if not pid and not any([srs, sdd, spmp, std, ri]):
+                    continue
+
+                # STRICT DEDUPLICATION LOGIC:
+                # If the LINKS are identical, it's the same project, even if they typed a different Team ID.
+                # We use the combination of links as the primary key.
                 link_fingerprint = f"{srs}|{sdd}|{spmp}|{std}|{ri}"
                 
-                # Deduplication Key: Combination of Team ID and their submitted links
-                # If either the ID is the same OR the links are exactly the same, they are merged.
-                dedup_key = pid if pid else f"LINK_SIG_{link_fingerprint}"
+                # If they didn't provide links yet, fall back to Project ID
+                dedup_key = link_fingerprint if any([srs, sdd, spmp, std, ri]) else f"ID_{pid}"
                 
-                if not pid and not any([srs, sdd, spmp, std, ri]):
-                    continue # Skip empty rows
-
                 project = {
                     'row_index': idx,
                     'project_id': pid or "N/A",
@@ -155,8 +156,7 @@ class RegistrySheetsService:
                     'academic_year': sheet_name
                 }
                 
-                # If a project with this ID or these specific links already exists, 
-                # overwrite it with this newer row (the one further down in the sheet).
+                # Always keep the LATEST submission for that fingerprint
                 unique_projects[dedup_key] = project
                 
             # Convert dictionary back to a sorted list based on original row order
