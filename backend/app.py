@@ -76,6 +76,26 @@ app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=7)
 
 # --- COMPONENT INITIALIZATION ---
 db.init_app(app)
+
+with app.app_context():
+    from sqlalchemy import text
+    try:
+        # Check and add batch_id column safely
+        result = db.session.execute(text("SHOW COLUMNS FROM archival_ledger LIKE 'batch_id'")).fetchone()
+        if not result:
+            logger.info("Auto-Migration: Adding 'batch_id' column...")
+            db.session.execute(text("ALTER TABLE archival_ledger ADD COLUMN batch_id VARCHAR(50) AFTER version"))
+            db.session.commit()
+            
+        # Clean up any bad migration columns we experimented with earlier
+        try:
+            db.session.execute(text("ALTER TABLE archival_ledger DROP COLUMN srs_modified_time"))
+            db.session.commit()
+        except: db.session.rollback()
+    except Exception as e:
+        db.session.rollback()
+        logger.warning(f"Auto-Migration skipped or failed: {e}")
+
 login_manager = LoginManager(app)
 CORS(app, supports_credentials=True)
 

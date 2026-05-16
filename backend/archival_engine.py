@@ -66,7 +66,6 @@ class ArchivalEngine:
         """AI Plagiarism Check (Across different projects only)"""
         if not new_text or len(new_text) < 100: return None, 0, None, None, None
         
-        # We only check for plagiarism against OTHER projects
         query = ArchivalLedger.query.filter(
             ArchivalLedger.status == 'archived',
             ArchivalLedger.project_id != current_project_id
@@ -141,41 +140,58 @@ class ArchivalEngine:
         ).order_by(ArchivalLedger.version.desc()).first()
         
         doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'database', 'readme']
-        results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': None, 'ts': None} for dt in doc_types}
+        results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': None} for dt in doc_types}
         total_changed = 0
+        error_msg = ""
+        processed_file_ids = {}
 
         for doc_type in doc_types:
             link = project_data.get(f'{doc_type}_link')
             file_id = self._extract_file_id(link)
             if not file_id: continue
+            
+            if file_id in processed_file_ids:
+                res = processed_file_ids[file_id]['data']
+                results[doc_type] = res
+                if res.get('is_changed'): total_changed += 1
+                continue
 
             try:
                 # 1. FETCH LIVE CLOCK FROM GOOGLE
                 metadata = self._get_file_metadata(file_id)
                 current_drive_ts = metadata.get('modifiedTime', 'Unknown')
-                results[doc_type]['ts'] = current_drive_ts
                 
-                # 2. ABSOLUTE VERSIONING: If time is different, we archive it. Period.
+                # 2. BULLETPROOF VERSIONING LOGIC
                 is_modified = True
-                if last_record:
-                    last_stored_ts = getattr(last_record, f"{doc_type}_modified_time")
-                    if last_stored_ts == current_drive_ts:
-                        # Only skip if the timestamp is EXACTLY the same as last time
-                        is_modified = False
-                        logger.info(f"UNCHANGED: {doc_type.upper()} timestamp matches vault.")
+                if last_record and last_record.archived_at and current_drive_ts != 'Unknown':
+                    try:
+                        drive_dt = datetime.datetime.fromisoformat(current_drive_ts.replace('Z', '+00:00'))
+                        # Add a tiny buffer (3 seconds) to account for processing time during the last archival
+                        vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc) + datetime.timedelta(seconds=3)
+                        
+                        # If Drive's modified time is older than the time we last archived the project, NO CHANGES were made.
+                        if drive_dt <= vault_dt:
+                            logger.info(f"UNCHANGED: {doc_type.upper()} timestamp ({drive_dt}) <= vault ({vault_dt}).")
+                            is_modified = False
+                        else:
+                            logger.info(f"CHANGE: {doc_type.upper()} modified in Drive! (Vault: {vault_dt} -> Drive: {drive_dt})")
+                    except Exception as e:
+                        logger.error(f"Time parsing error: {e}. Forcing archival.")
 
                 if not is_modified:
+                    # Skip processing, reuse old data perfectly
                     results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                     results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                     results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
+                    processed_file_ids[file_id] = {'data': results[doc_type]}
                     continue
 
                 # 3. FORCE ARCHIVE NEW VERSION
-                logger.info(f"FORCING VERSION: {doc_type.upper()} was edited in Drive! ({current_drive_ts})")
+                logger.info(f"Downloading new version for {doc_type.upper()}...")
                 
-                # IMPORTANT: Pause to allow Google to update the PDF export
+                # Wait briefly for Google's PDF exporter to catch up with the recent edit
                 import time
-                time.sleep(8) 
+                time.sleep(5) 
 
                 doc_dir = os.path.join(base_project_dir, doc_type.upper())
                 os.makedirs(doc_dir, exist_ok=True)
@@ -187,7 +203,9 @@ class ArchivalEngine:
                     results[doc_type]['bin'] = file_binary
                 
                 results[doc_type]['hash'] = metadata.get('md5Checksum') or hashlib.sha256(file_binary).hexdigest()
-                file_text = self._extract_text_from_pdf(temp_path)
+                file_text = ""
+                if doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'readme']:
+                    file_text = self._extract_text_from_pdf(temp_path)
                 results[doc_type]['text'] = file_text
 
                 total_changed += 1
@@ -206,40 +224,51 @@ class ArchivalEngine:
                 
                 os.rename(temp_path, final_path)
                 results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
+                processed_file_ids[file_id] = {'data': results[doc_type]}
                     
             except Exception as e:
                 logger.error(f"Error processing {doc_type}: {e}")
+                error_msg += f"{doc_type.upper()} Error: {str(e)}; "
 
         if total_changed == 0 and last_record:
-            return {'status': 'unchanged', 'message': 'No edits found in Google Drive since last archive.'}
+            return {'status': 'unchanged', 'message': 'No edits found in Google Drive since last archive.', 'version': last_record.version}
 
         current_version = (last_record.version if last_record else 0) + 1
+        status = "archived" if not error_msg else "failed"
+
+        # ALWAYS save the record if we made it here, to ensure the version increments
+        if status == "archived":
+            try:
+                ledger_entry = ArchivalLedger(
+                    project_id=project_id, project_title=project_data.get('project_title'),
+                    academic_year=academic_year, workbook_name=workbook_name,
+                    srs_original_url=project_data.get('srs_link'), sdd_original_url=project_data.get('sdd_link'),
+                    spmp_original_url=project_data.get('spmp_link'), std_original_url=project_data.get('std_link'),
+                    ri_original_url=project_data.get('ri_link'), source_code_original_url=project_data.get('source_code_link'),
+                    github_original_url=project_data.get('github_link'), database_original_url=project_data.get('database_link'),
+                    readme_original_url=project_data.get('readme_link'),
+                    srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
+                    spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
+                    ri_local_path=results['ri']['path'], source_code_local_path=results['source_code']['path'],
+                    database_local_path=results['database']['path'], readme_local_path=results['readme']['path'],
+                    srs_hash=results['srs']['hash'], sdd_hash=results['sdd']['hash'],
+                    spmp_hash=results['spmp']['hash'], std_hash=results['std']['hash'],
+                    ri_hash=results['ri']['hash'], source_code_hash=results['source_code']['hash'],
+                    database_hash=results['database']['hash'], readme_hash=results['readme']['hash'],
+                    srs_binary=results['srs']['bin'], sdd_binary=results['sdd']['bin'],
+                    spmp_binary=results['spmp']['bin'], std_binary=results['std']['bin'],
+                    ri_binary=results['ri']['bin'], source_code_binary=results['source_code']['bin'],
+                    database_binary=results['database']['bin'], readme_binary=results['readme']['bin'],
+                    srs_text=results['srs'].get('text'), sdd_text=results['sdd'].get('text'),
+                    spmp_text=results['spmp'].get('text'), std_text=results['std'].get('text'),
+                    ri_text=results['ri'].get('text'), readme_text=results['readme'].get('text'),
+                    status=status, version=current_version, batch_id=batch_id,
+                    error_message=error_msg.strip(), archived_at=datetime.datetime.utcnow()
+                )
+                db.session.add(ledger_entry)
+                db.session.commit()
+            except Exception as save_err:
+                logger.error(f"CRITICAL DATABASE ERROR: {save_err}")
+                return {'status': 'failed', 'version': current_version, 'error': f"Database save failed. Schema mismatch."}
         
-        new_entry = ArchivalLedger(
-            project_id=project_id, project_title=project_data.get('project_title'),
-            academic_year=academic_year, workbook_name=workbook_name,
-            srs_modified_time=results['srs']['ts'], sdd_modified_time=results['sdd']['ts'],
-            spmp_modified_time=results['spmp']['ts'], std_modified_time=results['std']['ts'],
-            ri_modified_time=results['ri']['ts'], source_code_modified_time=results['source_code']['ts'],
-            database_modified_time=results['database']['ts'], readme_modified_time=results['readme']['ts'],
-            srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
-            spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
-            ri_local_path=results['ri']['path'], source_code_local_path=results['source_code']['path'],
-            database_local_path=results['database']['path'], readme_local_path=results['readme']['path'],
-            srs_hash=results['srs']['hash'], sdd_hash=results['sdd']['hash'],
-            spmp_hash=results['spmp']['hash'], std_hash=results['std']['hash'],
-            ri_hash=results['ri']['hash'], source_code_hash=results['source_code']['hash'],
-            database_hash=results['database']['hash'], readme_hash=results['readme']['hash'],
-            srs_binary=results['srs']['bin'], sdd_binary=results['sdd']['bin'],
-            spmp_binary=results['spmp']['bin'], std_binary=results['std']['bin'],
-            ri_binary=results['ri']['bin'], source_code_binary=results['source_code']['bin'],
-            database_binary=results['database']['bin'], readme_binary=results['readme']['bin'],
-            srs_text=results['srs'].get('text'), sdd_text=results['sdd'].get('text'),
-            spmp_text=results['spmp'].get('text'), std_text=results['std'].get('text'),
-            ri_text=results['ri'].get('text'), readme_text=results['readme'].get('text'),
-            status='archived', version=current_version, batch_id=batch_id, archived_at=datetime.datetime.utcnow()
-        )
-        db.session.add(new_entry)
-        db.session.commit()
-        
-        return {'status': 'archived', 'version': current_version, 'paths': {dt: results[dt]['path'] for dt in doc_types}}
+        return {'status': status, 'version': current_version, 'paths': {dt: results[dt]['path'] for dt in doc_types}, 'error': error_msg.strip()}

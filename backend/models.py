@@ -70,16 +70,6 @@ class ArchivalLedger(db.Model):
     ri_text = db.Column(db.Text, nullable=True)
     readme_text = db.Column(db.Text, nullable=True)
 
-    # Per-File Google Drive Timestamps (Source of Truth for Versioning)
-    srs_modified_time = db.Column(db.String(100), nullable=True)
-    sdd_modified_time = db.Column(db.String(100), nullable=True)
-    spmp_modified_time = db.Column(db.String(100), nullable=True)
-    std_modified_time = db.Column(db.String(100), nullable=True)
-    ri_modified_time = db.Column(db.String(100), nullable=True)
-    source_code_modified_time = db.Column(db.String(100), nullable=True)
-    database_modified_time = db.Column(db.String(100), nullable=True)
-    readme_modified_time = db.Column(db.String(100), nullable=True)
-
     status = db.Column(db.String(50), default='pending')
     version = db.Column(db.Integer, default=1)
     batch_id = db.Column(db.String(50), nullable=True)
