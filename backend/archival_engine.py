@@ -229,7 +229,7 @@ class ArchivalEngine:
             logger.error(f"Failed to fetch metadata for {file_id}: {e}")
             return None
 
-    def archive_project(self, project_data, workbook_name="Archives"):
+    def archive_project(self, project_data, workbook_name="Archives", batch_id=None):
         project_id = project_data.get('project_id', 'Unknown')
         # Clean title and ID for folder naming
         clean_title = project_data.get('project_title', 'Untitled').replace(' ', '_').replace('/', '_')
@@ -439,6 +439,7 @@ class ArchivalEngine:
 
                 status=status,
                 version=current_version,
+                batch_id=batch_id,
                 error_message=error_msg.strip(),
                 archived_at=datetime.datetime.utcnow()
             )

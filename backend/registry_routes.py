@@ -284,6 +284,9 @@ def archive_selected():
     if not projects:
         return jsonify({"error": "No projects selected"}), 400
     
+    import uuid
+    batch_id = str(uuid.uuid4())[:13] # e.g. "a1b2c3d4-e5f6"
+    
     user_creds = get_user_creds()
     sheet_id = request.json.get('sheet_id') or request.args.get('sheet_id') or os.getenv('SHEET_ID')
     
@@ -328,7 +331,7 @@ def archive_selected():
                         import time, random
                         time.sleep(random.uniform(0.1, 2.0))
                         _, engine = get_services(requested_sheet_id=sid, provided_user_creds=creds)
-                        result = engine.archive_project(p, workbook_name=wb_name)
+                        result = engine.archive_project(p, workbook_name=wb_name, batch_id=batch_id)
                         status = result['status'].capitalize()
                         if result['status'] == 'unchanged': status = 'Archived'
                         LIVE_STATUS_TRACKER[tracker_key] = status
