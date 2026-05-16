@@ -107,14 +107,16 @@ class RegistrySheetsService:
         return mapping
 
     def get_all_projects(self, sheet_name):
-        """Fetch all rows using dynamic header mapping"""
+        """Fetch all rows using dynamic header mapping and filter duplicates by project_id"""
         try:
             worksheet = self.workbook.worksheet(sheet_name)
             all_records = worksheet.get_all_values()
             if not all_records: return []
 
             col_map = self._get_header_map(worksheet)
-            projects = []
+            
+            # Dictionary to keep the latest entry for each project_id
+            unique_projects = {}
             
             for idx, row in enumerate(all_records[1:], start=2):
                 def get_val(key, default=''):
@@ -122,9 +124,13 @@ class RegistrySheetsService:
                         return row[col_map[key]]
                     return default
 
+                pid = get_val('project_id')
+                if not pid:
+                    pid = f"TEMP_{idx}" # Handle empty IDs by making them unique to the row
+
                 project = {
                     'row_index': idx,
-                    'project_id': get_val('project_id'),
+                    'project_id': pid,
                     'project_title': get_val('project_title', 'Untitled'),
                     'srs_link': get_val('srs_link'),
                     'sdd_link': get_val('sdd_link'),
@@ -134,8 +140,13 @@ class RegistrySheetsService:
                     'status': get_val('status', 'Pending'),
                     'academic_year': sheet_name
                 }
-                projects.append(project)
-            return projects
+                
+                # If project_id already exists, this will overwrite it with the latest row
+                # This ensures the "Registry Pipeline" only shows one entry per Project ID
+                unique_projects[pid] = project
+                
+            # Convert dictionary back to a sorted list based on original row order
+            return sorted(unique_projects.values(), key=lambda x: x['row_index'])
         except Exception as e:
             logger.error(f"Error fetching projects: {e}")
             raise e
