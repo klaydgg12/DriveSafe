@@ -464,7 +464,7 @@ const RegistryDashboard: React.FC = () => {
                                             <td className="px-4 py-4">
                                                 <div className="flex flex-col">
                                                     <span className="text-sm font-bold text-slate-900 group-hover:text-indigo-600 transition-colors tracking-tight line-clamp-1">{p.project_title}</span>
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">{p.academic_year} Registry</span>
+                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">{p.academic_year}</span>
                                                 </div>
                                             </td>
                                             <td className="px-4 py-4">
