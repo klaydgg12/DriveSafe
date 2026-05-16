@@ -80,22 +80,57 @@ db.init_app(app)
 with app.app_context():
     from sqlalchemy import text
     try:
-        # 1. Ensure batch_id exists
-        result_batch = db.session.execute(text("SHOW COLUMNS FROM archival_ledger LIKE 'batch_id'")).fetchone()
-        if not result_batch:
-            db.session.execute(text("ALTER TABLE archival_ledger ADD COLUMN batch_id VARCHAR(50) AFTER version"))
-            db.session.commit()
+        # --- COMPREHENSIVE AUTO-MIGRATION ---
+        # List of ALL columns that might be missing due to recent updates
+        columns_to_add = [
+            # Metadata
+            ('batch_id', 'VARCHAR(50) AFTER version'),
+            ('drive_modified_time', 'VARCHAR(100) AFTER batch_id'),
             
-        # 2. Ensure drive_modified_time exists (The secret to 100% versioning)
-        result_ts = db.session.execute(text("SHOW COLUMNS FROM archival_ledger LIKE 'drive_modified_time'")).fetchone()
-        if not result_ts:
-            db.session.execute(text("ALTER TABLE archival_ledger ADD COLUMN drive_modified_time VARCHAR(100) AFTER batch_id"))
-            db.session.commit()
+            # Original URLs
+            ('source_code_original_url', 'VARCHAR(500) AFTER ri_original_url'),
+            ('github_original_url', 'VARCHAR(500) AFTER source_code_original_url'),
+            ('database_original_url', 'VARCHAR(500) AFTER github_original_url'),
+            ('readme_original_url', 'VARCHAR(500) AFTER database_original_url'),
             
-        logger.info("Auto-Migration: Database is up-to-date.")
+            # Local Paths
+            ('source_code_local_path', 'VARCHAR(500) AFTER ri_local_path'),
+            ('database_local_path', 'VARCHAR(500) AFTER source_code_local_path'),
+            ('readme_local_path', 'VARCHAR(500) AFTER database_local_path'),
+            
+            # Hashes
+            ('source_code_hash', 'VARCHAR(64) AFTER ri_hash'),
+            ('database_hash', 'VARCHAR(64) AFTER source_code_hash'),
+            ('readme_hash', 'VARCHAR(64) AFTER database_hash'),
+            
+            # Binary Data
+            ('source_code_binary', 'LONGBLOB AFTER ri_binary'),
+            ('database_binary', 'LONGBLOB AFTER source_code_binary'),
+            ('readme_binary', 'LONGBLOB AFTER database_binary'),
+            
+            # Text Content
+            ('readme_text', 'TEXT AFTER ri_text')
+        ]
+        
+        for col_name, col_type in columns_to_add:
+            try:
+                # Check if column exists
+                check_sql = text(f"SHOW COLUMNS FROM archival_ledger LIKE '{col_name}'")
+                result = db.session.execute(check_sql).fetchone()
+                
+                if not result:
+                    logger.info(f"Auto-Migration: Adding missing column '{col_name}'...")
+                    alter_sql = text(f"ALTER TABLE archival_ledger ADD COLUMN {col_name} {col_type}")
+                    db.session.execute(alter_sql)
+                    db.session.commit()
+            except Exception as col_err:
+                db.session.rollback()
+                logger.warning(f"Could not add column {col_name}: {col_err}")
+
+        logger.info("Auto-Migration: Database schema is now synchronized.")
     except Exception as e:
         db.session.rollback()
-        logger.warning(f"Auto-Migration skipped: {e}")
+        logger.warning(f"Auto-Migration system encountered an error: {e}")
 
 login_manager = LoginManager(app)
 CORS(app, supports_credentials=True)
