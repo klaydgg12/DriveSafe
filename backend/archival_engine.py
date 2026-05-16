@@ -254,6 +254,11 @@ class ArchivalEngine:
         error_msg = ""
         total_changed = 0
 
+        # --- TEAM-LEVEL LINK DEDUPLICATION ---
+        # Map file IDs to their processed results to avoid downloading the same file twice
+        # if multiple document types point to the same Google Drive file.
+        processed_file_ids = {}
+
         # 2. Process each document
         project_title = project_data.get('project_title', 'Untitled')
         for doc_type in doc_types:
@@ -261,6 +266,17 @@ class ArchivalEngine:
             file_id = self._extract_file_id(link)
             
             if file_id:
+                # If this specific file ID was already processed in this session (e.g. SRS and SDD are same link)
+                if file_id in processed_file_ids:
+                    logger.info(f"Team Deduplication: {doc_type.upper()} uses same link as {processed_file_ids[file_id]['source']}. Reusing results.")
+                    res = processed_file_ids[file_id]['data']
+                    results[doc_type] = {
+                        'path': res['path'], 'hash': res['hash'], 'text': res.get('text'), 
+                        'bin': res.get('bin'), 'is_changed': res.get('is_changed', False)
+                    }
+                    if res.get('is_changed'): total_changed += 1
+                    continue
+
                 try:
                     # --- TURBO METADATA OPTIMIZATION ---
                     metadata = self._get_file_metadata(file_id)
@@ -282,6 +298,8 @@ class ArchivalEngine:
                         results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                         results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
                         results[doc_type]['bin'] = None
+                        # Cache for team-level deduplication
+                        processed_file_ids[file_id] = {'source': doc_type, 'data': results[doc_type]}
                         continue
                     # --- END TURBO OPTIMIZATION ---
 
@@ -299,11 +317,11 @@ class ArchivalEngine:
                     file_hash = self._compute_hash(actual_temp_path)
                     results[doc_type]['hash'] = file_hash
                     
-                    # AI Text Extraction for semantic check
+                    # AI Text Extraction
                     file_text = self._extract_text_from_pdf(actual_temp_path)
                     results[doc_type]['text'] = file_text
                     
-                    # 3. Check if this specific file changed compared to the last version of THIS project
+                    # 3. Check if this specific file changed compared to the last version
                     changed = True
                     if last_record:
                         last_hash = getattr(last_record, f"{doc_type}_hash")
@@ -311,7 +329,7 @@ class ArchivalEngine:
                             logger.info(f"Hash Match: {doc_type.upper()} is identical. No new version.")
                             changed = False
                         else:
-                            # If hash differs, check AI similarity to see if it's just metadata change
+                            # If hash differs, check AI similarity
                             last_text = getattr(last_record, f"{doc_type}_text")
                             if file_text and last_text:
                                 try:
@@ -324,18 +342,22 @@ class ArchivalEngine:
                                         changed = False
                                 except: pass
 
-                    # 4. Plagiarism Check (Against other projects)
-                    dup_type, score, orig_title, orig_project_id, _ = self.check_for_duplicates(file_hash, file_text, current_project_id=project_id)
-                    if dup_type and orig_project_id != project_id:
-                        logger.warning(f"PLAGIARISM: {doc_type.upper()} matches '{orig_title}'")
-                        results[doc_type]['dup'] = f"Warning: Similar to {orig_title}"
+                    # 4. Plagiarism Check (ONLY ON 2ND SESSION ONWARDS)
+                    # If this is the FIRST time this project is being archived (no last_record),
+                    # we skip the AI check against other projects to save time.
+                    if last_record:
+                        dup_type, score, orig_title, orig_project_id, _ = self.check_for_duplicates(file_hash, file_text, current_project_id=project_id)
+                        if dup_type and orig_project_id != project_id:
+                            logger.warning(f"PLAGIARISM: {doc_type.upper()} matches '{orig_title}'")
+                            results[doc_type]['dup'] = f"Warning: Similar to {orig_title}"
+                    else:
+                        logger.info(f"AI FAST-TRACK: Skipping cross-project check for initial archival.")
                     
                     if changed:
                         total_changed += 1
                         results[doc_type]['is_changed'] = True
                         
                         # Calculate per-document version correctly
-                        # We count how many non-null hashes exist for this specific doc type
                         from sqlalchemy import func
                         prev_doc_versions = db.session.query(func.count(ArchivalLedger.id)).filter(
                             ArchivalLedger.project_id == project_id,
@@ -362,6 +384,9 @@ class ArchivalEngine:
                         results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
                         results[doc_type]['bin'] = None
                         if os.path.exists(actual_temp_path): os.remove(actual_temp_path)
+                    
+                    # Cache for team-level deduplication
+                    processed_file_ids[file_id] = {'source': doc_type, 'data': results[doc_type]}
                         
                 except Exception as e:
                     error_msg += f"{doc_type.upper()} Error: {str(e)}; "
