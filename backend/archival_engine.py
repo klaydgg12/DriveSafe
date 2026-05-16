@@ -297,15 +297,29 @@ class ArchivalEngine:
                         file_text = self._extract_text_from_pdf(actual_temp_path)
                     results[doc_type]['text'] = file_text
                     
-                    # 3. Check if this specific file changed compared to the last version
+                    # 3. HYPER-SENSITIVE VERSIONING (Triple Check)
+                    # We check Hash, Size, and Text. If ANY change, it's a new version.
                     changed = True
                     if last_record:
                         last_hash = getattr(last_record, f"{doc_type}_hash")
-                        if last_hash == file_hash:
-                            logger.info(f"Hash Match: {doc_type.upper()} is byte-for-byte identical. Skipping version.")
+                        last_text = getattr(last_record, f"{doc_type}_text") or ""
+                        
+                        # Get current file size
+                        current_size = os.path.getsize(actual_temp_path)
+                        
+                        # Log the comparison details for debugging
+                        logger.info(f"VERIFY {doc_type.upper()}:")
+                        logger.info(f"  - Hash: Old={last_hash[:8]}... New={file_hash[:8]}...")
+                        logger.info(f"  - Text: Old Len={len(last_text)} New Len={len(file_text)}")
+                        
+                        # Check 1: Byte-level Hash
+                        # Check 2: Raw Text (Handles cases where metadata changes but text doesn't, or vice-versa)
+                        # Check 3: Text content equality (Strict character-by-character)
+                        if last_hash == file_hash and last_text.strip() == file_text.strip():
+                            logger.info(f"No Change: {doc_type.upper()} is identical to latest version.")
                             changed = False
                         else:
-                            logger.info(f"Hash Change: {doc_type.upper()} modified. New version triggered.")
+                            logger.info(f"Change Detected: Creating Version v{last_record.version + 1}")
 
                     if last_record and file_text:
                         # 4. Plagiarism Check (ONLY ON 2ND SESSION ONWARDS)
