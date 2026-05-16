@@ -3,7 +3,7 @@ import axios from "axios";
 import { 
   History, Search, Filter, Calendar, BookOpen, 
   FileText, ArrowLeft, RefreshCw,
-  Clock, Eye, ExternalLink, BarChart, Info
+  Clock, Eye, ExternalLink, BarChart, Info, Trash2
 } from "lucide-react";
 import Logo from "../components/Logo";
 
@@ -92,6 +92,21 @@ const ArchiveAnalyticsPage = () => {
       console.error("Failed to fetch history:", err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDelete = async (id: number, title: string) => {
+    if (!window.confirm(`Are you sure you want to permanently delete the archival record for "${title}"? This cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await axios.delete(`/api/registry/ledger/${id}`, { withCredentials: true });
+      // Update local state to remove the deleted record
+      setRecords(prev => prev.filter(r => r.id !== id));
+    } catch (err) {
+      console.error("Failed to delete record:", err);
+      alert("Error deleting record. Please check server logs.");
     }
   };
 
@@ -319,6 +334,13 @@ const ArchiveAnalyticsPage = () => {
                           title="Open in Ledger"
                         >
                           <ExternalLink size={16} />
+                        </button>
+                        <button 
+                          onClick={() => handleDelete(record.id, record.project_title)}
+                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all border border-transparent hover:border-rose-100"
+                          title="Delete Record"
+                        >
+                          <Trash2 size={16} />
                         </button>
                       </div>
                     </div>
