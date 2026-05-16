@@ -123,7 +123,8 @@ class ArchivalEngine:
             max_sim_idx = cosine_similarities.argmax()
             max_sim_score = cosine_similarities[max_sim_idx]
             
-            if max_sim_score > 0.90:
+            # Threshold lowered to 50% as requested to catch more potential duplicates
+            if max_sim_score > 0.50:
                 match_meta = metadata_map[max_sim_idx]
                 logger.info(f"AI Batch Similarity Match: {max_sim_score:.4f} against {match_meta['title']} ({match_meta['dt'].upper()})")
                 return "Semantic Duplicate", max_sim_score, match_meta['title'], match_meta['id'], match_meta['version']
