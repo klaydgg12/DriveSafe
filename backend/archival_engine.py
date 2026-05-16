@@ -323,17 +323,6 @@ class ArchivalEngine:
                         if last_hash == file_hash:
                             logger.info(f"Hash Match: {doc_type.upper()} is identical. No new version.")
                             changed = False
-                        else:
-                            last_text = getattr(last_record, f"{doc_type}_text")
-                            if file_text and last_text:
-                                try:
-                                    vectorizer = TfidfVectorizer().fit_transform([file_text, last_text])
-                                    vectors = vectorizer.toarray()
-                                    similarity = cosine_similarity(vectors)[0][1]
-                                    if similarity > 0.999:
-                                        logger.info(f"AI: {doc_type.upper()} is 99.9%+ identical.")
-                                        changed = False
-                                except: pass
 
                     if last_record and file_text:
                         # 4. Plagiarism Check (ONLY ON 2ND SESSION ONWARDS)
