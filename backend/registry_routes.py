@@ -212,7 +212,7 @@ def get_grouped_ledger():
         if workbook_name: query = query.filter_by(workbook_name=workbook_name)
         records = query.order_by(ArchivalLedger.id.asc()).all()
         if not records: return jsonify([])
-        last_hashes = defaultdict(lambda: defaultdict(lambda: None))
+        
         doc_versions = defaultdict(lambda: defaultdict(int))
         grouped_data = {}
         for r in records:
@@ -230,15 +230,14 @@ def get_grouped_ledger():
             for doc_type in ["srs", "sdd", "spmp", "std", "ri", "source_code", "database", "readme"]:
                 path = getattr(r, f"{doc_type}_local_path")
                 current_hash = getattr(r, f"{doc_type}_hash")
-                if path and current_hash:
-                    if current_hash != last_hashes[project_key][doc_type]:
-                        last_hashes[project_key][doc_type] = current_hash
-                        doc_versions[project_key][doc_type] += 1
-                        target["documents"][doc_type].append({
-                            "id": r.id, "version": doc_versions[project_key][doc_type],
-                            "hash": current_hash, "timestamp": r.archived_at.isoformat() + 'Z' if r.archived_at else None,
-                            "status": r.status
-                        })
+                if path:
+                    # REMOVED HASH FILTERING - Every saved record is a valid version
+                    doc_versions[project_key][doc_type] += 1
+                    target["documents"][doc_type].append({
+                        "id": r.id, "version": doc_versions[project_key][doc_type],
+                        "hash": current_hash, "timestamp": r.archived_at.isoformat() + 'Z' if r.archived_at else None,
+                        "status": r.status
+                    })
         result = list(grouped_data.values())
         for project in result:
             for doc_type in project["documents"]: project["documents"][doc_type].reverse()

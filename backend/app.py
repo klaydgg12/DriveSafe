@@ -80,21 +80,22 @@ db.init_app(app)
 with app.app_context():
     from sqlalchemy import text
     try:
-        # Check and add batch_id column safely
-        result = db.session.execute(text("SHOW COLUMNS FROM archival_ledger LIKE 'batch_id'")).fetchone()
-        if not result:
-            logger.info("Auto-Migration: Adding 'batch_id' column...")
+        # 1. Ensure batch_id exists
+        result_batch = db.session.execute(text("SHOW COLUMNS FROM archival_ledger LIKE 'batch_id'")).fetchone()
+        if not result_batch:
             db.session.execute(text("ALTER TABLE archival_ledger ADD COLUMN batch_id VARCHAR(50) AFTER version"))
             db.session.commit()
             
-        # Clean up any bad migration columns we experimented with earlier
-        try:
-            db.session.execute(text("ALTER TABLE archival_ledger DROP COLUMN srs_modified_time"))
+        # 2. Ensure drive_modified_time exists (The secret to 100% versioning)
+        result_ts = db.session.execute(text("SHOW COLUMNS FROM archival_ledger LIKE 'drive_modified_time'")).fetchone()
+        if not result_ts:
+            db.session.execute(text("ALTER TABLE archival_ledger ADD COLUMN drive_modified_time VARCHAR(100) AFTER batch_id"))
             db.session.commit()
-        except: db.session.rollback()
+            
+        logger.info("Auto-Migration: Database is up-to-date.")
     except Exception as e:
         db.session.rollback()
-        logger.warning(f"Auto-Migration skipped or failed: {e}")
+        logger.warning(f"Auto-Migration skipped: {e}")
 
 login_manager = LoginManager(app)
 CORS(app, supports_credentials=True)
