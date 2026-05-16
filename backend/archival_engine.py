@@ -276,8 +276,22 @@ class ArchivalEngine:
                     continue
 
                 try:
-                    # STRICT HASH-BASED VERSIONING
-                    # We always download the latest file to check for any byte-level changes
+                    # 1. GET FRESH METADATA
+                    metadata = self._get_file_metadata(file_id)
+                    mod_time_raw = metadata.get('modifiedTime', '')
+                    
+                    logger.info(f"Processing {doc_type.upper()}: Last Modified in Drive: {mod_time_raw}")
+
+                    # SYNC GUARD: Google Docs takes a few seconds to update its PDF export
+                    try:
+                        mod_dt = datetime.datetime.fromisoformat(mod_time_raw.replace('Z', '+00:00'))
+                        now_dt = datetime.datetime.now(datetime.timezone.utc)
+                        if (now_dt - mod_dt).total_seconds() < 25:
+                            logger.info(f"Sync Guard: File was recently modified. Waiting 7s for Google PDF sync...")
+                            import time
+                            time.sleep(7)
+                    except: pass
+
                     doc_dir = os.path.join(base_project_dir, doc_type.upper())
                     os.makedirs(doc_dir, exist_ok=True)
                     
@@ -291,43 +305,37 @@ class ArchivalEngine:
                     file_hash = self._compute_hash(actual_temp_path)
                     results[doc_type]['hash'] = file_hash
                     
-                    # AI Text Extraction (Only for relevant types)
+                    # AI Text Extraction
                     file_text = ""
                     if doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'readme']:
                         file_text = self._extract_text_from_pdf(actual_temp_path)
                     results[doc_type]['text'] = file_text
                     
-                    # 3. HYPER-SENSITIVE VERSIONING (Triple Check)
-                    # We check Hash, Size, and Text. If ANY change, it's a new version.
+                    # 3. HYPER-SENSITIVE VERSIONING (100% Literal Check)
                     changed = True
                     if last_record:
                         last_hash = getattr(last_record, f"{doc_type}_hash")
                         last_text = getattr(last_record, f"{doc_type}_text") or ""
                         
-                        # Get current file size
-                        current_size = os.path.getsize(actual_temp_path)
+                        # LOG EXACT COMPARISON FOR OUTPUT.LOG
+                        logger.info(f"SENSITIVITY CHECK [{doc_type.upper()}]:")
+                        logger.info(f"  - OLD TEXT START: '{last_text[:50]}...' (Len: {len(last_text)})")
+                        logger.info(f"  - NEW TEXT START: '{file_text[:50]}...' (Len: {len(file_text)})")
                         
-                        # Log the comparison details for debugging
-                        logger.info(f"VERIFY {doc_type.upper()}:")
-                        logger.info(f"  - Hash: Old={last_hash[:8]}... New={file_hash[:8]}...")
-                        logger.info(f"  - Text: Old Len={len(last_text)} New Len={len(file_text)}")
-                        
-                        # Check 1: Byte-level Hash
-                        # Check 2: Raw Text (Handles cases where metadata changes but text doesn't, or vice-versa)
-                        # Check 3: Text content equality (Strict character-by-character)
-                        if last_hash == file_hash and last_text.strip() == file_text.strip():
-                            logger.info(f"No Change: {doc_type.upper()} is identical to latest version.")
+                        # Byte-level + String-level equality check
+                        if last_hash == file_hash and last_text == file_text:
+                            logger.info(f"RESULT: No change detected. Skipping.")
                             changed = False
                         else:
-                            logger.info(f"Change Detected: Creating Version v{last_record.version + 1}")
+                            logger.info(f"RESULT: Change detected! New version triggered.")
 
                     if last_record and file_text:
-                        # 4. Plagiarism Check (ONLY ON 2ND SESSION ONWARDS)
+                        # 4. Plagiarism Check (Against other projects)
                         dup_type, score, orig_title, orig_project_id, _ = self.check_for_duplicates(file_hash, file_text, current_project_id=project_id)
                         if dup_type and orig_project_id != project_id:
                             results[doc_type]['dup'] = f"Warning: Similar to {orig_title}"
                     else:
-                        logger.info(f"AI FAST-TRACK: Skipping cross-project check for initial archival.")
+                        logger.info(f"AI FAST-TRACK: Skipping cross-project check.")
                     
                     if changed:
                         total_changed += 1
