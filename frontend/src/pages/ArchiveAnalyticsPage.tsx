@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { 
-  History, Search, Filter, Calendar, BookOpen, User, 
-  FileText, ArrowLeft, RefreshCw, ChevronRight, LayoutDashboard,
-  Clock, Download, Eye, ExternalLink, BarChart, Info, AlertCircle
+  History, Search, Filter, Calendar, BookOpen, 
+  FileText, ArrowLeft, RefreshCw,
+  Clock, Eye, ExternalLink, BarChart, Info
 } from "lucide-react";
 import Logo from "../components/Logo";
 
@@ -250,7 +250,7 @@ const ArchiveAnalyticsPage = () => {
               <button onClick={() => { setSearchQuery(""); setYearFilter("All Years"); }} className="mt-4 text-indigo-600 font-bold hover:underline">Clear all filters</button>
             </div>
           ) : (
-            filteredRecords.map((record, idx) => (
+            filteredRecords.map((record) => (
               <div 
                 key={record.id} 
                 className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-100 transition-all group overflow-hidden"
