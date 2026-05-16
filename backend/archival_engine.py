@@ -276,28 +276,8 @@ class ArchivalEngine:
                     continue
 
                 try:
-                    metadata = self._get_file_metadata(file_id)
-                    if not metadata:
-                        raise Exception("Could not reach Google Drive for metadata.")
-
-                    changed = True
-                    if last_record and last_record.archived_at:
-                        raw_mod_time = metadata.get('modifiedTime')
-                        mod_time = datetime.datetime.fromisoformat(raw_mod_time.replace('Z', '+00:00'))
-                        
-                        last_archive_time = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
-                        if mod_time <= last_archive_time + datetime.timedelta(seconds=5):
-                            logger.info(f"Turbo Skip: {doc_type.upper()} is up-to-date in vault.")
-                            changed = False
-
-                    if not changed:
-                        results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                        results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
-                        results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
-                        results[doc_type]['bin'] = None
-                        processed_file_ids[file_id] = {'source': doc_type, 'data': results[doc_type]}
-                        continue
-
+                    # STRICT HASH-BASED VERSIONING
+                    # We always download the latest file to check for any byte-level changes
                     doc_dir = os.path.join(base_project_dir, doc_type.upper())
                     os.makedirs(doc_dir, exist_ok=True)
                     
@@ -317,16 +297,18 @@ class ArchivalEngine:
                         file_text = self._extract_text_from_pdf(actual_temp_path)
                     results[doc_type]['text'] = file_text
                     
+                    # 3. Check if this specific file changed compared to the last version
                     changed = True
                     if last_record:
                         last_hash = getattr(last_record, f"{doc_type}_hash")
                         if last_hash == file_hash:
-                            logger.info(f"Hash Match: {doc_type.upper()} is identical. No new version.")
+                            logger.info(f"Hash Match: {doc_type.upper()} is byte-for-byte identical. Skipping version.")
                             changed = False
+                        else:
+                            logger.info(f"Hash Change: {doc_type.upper()} modified. New version triggered.")
 
                     if last_record and file_text:
                         # 4. Plagiarism Check (ONLY ON 2ND SESSION ONWARDS)
-                        # Skip cross-project check for initial archival to save time
                         dup_type, score, orig_title, orig_project_id, _ = self.check_for_duplicates(file_hash, file_text, current_project_id=project_id)
                         if dup_type and orig_project_id != project_id:
                             results[doc_type]['dup'] = f"Warning: Similar to {orig_title}"
