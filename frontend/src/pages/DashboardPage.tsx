@@ -178,11 +178,11 @@ const DashboardPage: React.FC = () => {
         </div>
 
         {/* Analytics Card - NEW */}
-        <div className="bg-white/80 backdrop-blur-md p-10 rounded-[3rem] border border-gray-200/60 shadow-sm hover:shadow-2xl hover:-translate-y-1 transition-all duration-500 group relative overflow-hidden flex flex-col justify-between md:flex-row items-center gap-8">
-          <div className="absolute -right-10 -top-10 opacity-[0.03] group-hover:opacity-[0.05] transition-opacity">
+        <div className="bg-white/80 backdrop-blur-md p-10 rounded-[3rem] border border-gray-200/60 shadow-sm hover:shadow-2xl hover:-translate-y-1 transition-all duration-500 group relative overflow-hidden flex flex-col justify-between md:flex-row items-center gap-8 z-20">
+          <div className="absolute -right-10 -top-10 opacity-[0.03] group-hover:opacity-[0.05] transition-opacity pointer-events-none">
               <Zap className="w-64 h-64 rotate-6" />
           </div>
-          <div className="flex flex-col md:flex-row items-center gap-8 flex-1">
+          <div className="flex flex-col md:flex-row items-center gap-8 flex-1 pointer-events-none">
             <div className="w-20 h-20 bg-gradient-to-br from-amber-400 to-orange-500 rounded-[1.5rem] flex items-center justify-center text-white group-hover:scale-110 transition-transform duration-500 shadow-xl shadow-amber-200/50 shrink-0">
               <Zap className="w-10 h-10" />
             </div>
@@ -193,12 +193,12 @@ const DashboardPage: React.FC = () => {
               </p>
             </div>
           </div>
-          <button 
-            onClick={() => window.location.hash = "archive-analytics"}
-            className="w-full md:w-auto px-10 py-5 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white rounded-2xl font-black text-sm tracking-[0.2em] transition-all shadow-xl shadow-amber-200 active:scale-[0.98] shrink-0"
+          <a 
+            href="#archive-analytics"
+            className="w-full md:w-auto px-10 py-5 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white rounded-2xl font-black text-sm tracking-[0.2em] transition-all shadow-xl shadow-amber-200 active:scale-[0.98] shrink-0 text-center cursor-pointer relative z-30"
           >
             Open Analytics
-          </button>
+          </a>
         </div>
       </main>
 
