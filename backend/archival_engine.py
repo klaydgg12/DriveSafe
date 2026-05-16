@@ -311,26 +311,28 @@ class ArchivalEngine:
                         file_text = self._extract_text_from_pdf(actual_temp_path)
                     results[doc_type]['text'] = file_text
                     
-                    # 3. HYPER-SENSITIVE VERSIONING (100% Literal Check)
+                    # 3. ATOMIC VERSIONING (Google-MD5 + Literal Check)
                     changed = True
                     if last_record:
+                        # Get Google's own file hash for 100% server-side accuracy
+                        google_md5 = metadata.get('md5Checksum')
                         last_hash = getattr(last_record, f"{doc_type}_hash")
                         last_text = getattr(last_record, f"{doc_type}_text") or ""
-                        
-                        # LOG EXACT COMPARISON FOR OUTPUT.LOG
+
                         logger.info(f"SENSITIVITY CHECK [{doc_type.upper()}]:")
-                        logger.info(f"  - OLD TEXT START: '{last_text[:50]}...' (Len: {len(last_text)})")
-                        logger.info(f"  - NEW TEXT START: '{file_text[:50]}...' (Len: {len(file_text)})")
+                        logger.info(f"  - Google MD5: {google_md5}")
+                        logger.info(f"  - Vault Hash: {last_hash}")
                         
-                        # Byte-level + String-level equality check
-                        if last_hash == file_hash and last_text == file_text:
+                        # If Google says the file is different, OR our text extraction finds a difference
+                        # we trigger a new version. This catches even a single changed space.
+                        if google_md5 == last_hash and last_text == file_text:
                             logger.info(f"RESULT: No change detected. Skipping.")
                             changed = False
                         else:
-                            logger.info(f"RESULT: Change detected! New version triggered.")
+                            logger.info(f"RESULT: Change detected (MD5 or Text mismatch). New version triggered.")
 
                     if last_record and file_text:
-                        # 4. Plagiarism Check (Against other projects)
+                        # 4. Plagiarism Check
                         dup_type, score, orig_title, orig_project_id, _ = self.check_for_duplicates(file_hash, file_text, current_project_id=project_id)
                         if dup_type and orig_project_id != project_id:
                             results[doc_type]['dup'] = f"Warning: Similar to {orig_title}"
