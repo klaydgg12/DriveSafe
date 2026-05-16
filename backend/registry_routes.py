@@ -142,7 +142,9 @@ def get_pending():
     try:
         from models import ArchivalLedger
         sheets_service, _ = get_services(requested_sheet_id=sheet_id)
-        projects = sheets_service.get_all_projects(year)
+        result = sheets_service.get_all_projects(year)
+        projects = result['projects']
+        available_docs = result['available_docs']
         
         for p in projects:
             tracker_key = f"{sheet_id}_{year}_{p['row_index']}"
@@ -156,7 +158,10 @@ def get_pending():
             ).order_by(ArchivalLedger.version.desc()).first()
             p['latest_version'] = last_record.version if last_record else 0
             
-        return jsonify(projects)
+        return jsonify({
+            'projects': projects,
+            'available_docs': available_docs
+        })
     except Exception as e:
         logger.error(f"Failed to fetch projects: {e}", exc_info=True)
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500

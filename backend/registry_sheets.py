@@ -187,7 +187,16 @@ class RegistrySheetsService:
                 unique_projects[dedup_key] = project
                 
             # Convert dictionary back to a sorted list based on original row order
-            return sorted(unique_projects.values(), key=lambda x: x['row_index'])
+            projects_list = sorted(unique_projects.values(), key=lambda x: x['row_index'])
+            
+            # Return both projects AND which columns actually exist in the sheet
+            # This allows for a Dynamic Dashboard that only shows what's in the sheet.
+            available_columns = [key.replace('_link', '') for key in col_map.keys() if '_link' in key]
+            
+            return {
+                'projects': projects_list,
+                'available_docs': available_columns
+            }
         except Exception as e:
             logger.error(f"Error fetching projects: {e}")
             raise e
