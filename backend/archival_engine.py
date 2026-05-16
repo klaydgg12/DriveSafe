@@ -55,7 +55,6 @@ class ArchivalEngine:
         try:
             text = ""
             with pdfplumber.open(file_path) as pdf:
-                # Increased limit to 100 pages to catch changes in large documents
                 for page in pdf.pages[:100]:
                     text += (page.extract_text() or "")
             return text
@@ -67,7 +66,6 @@ class ArchivalEngine:
         """
         Deduplication Engine: Returns (type, score, original_title, original_project_id, version)
         """
-        # 1. Exact Hash Check
         exact_match = ArchivalLedger.query.filter(
             (ArchivalLedger.srs_hash == new_file_hash) | 
             (ArchivalLedger.sdd_hash == new_file_hash) |
@@ -79,7 +77,6 @@ class ArchivalEngine:
         if exact_match:
             return "Exact Duplicate", 1.0, exact_match.project_title, exact_match.project_id, exact_match.version
 
-        # 2. AI Semantic Similarity (BATCH OPTIMIZED)
         if not new_text or len(new_text) < 100: 
             return None, 0, None, None, None
 
@@ -92,9 +89,8 @@ class ArchivalEngine:
         if not past_records:
             return None, 0, None, None, None
 
-        # Build the corpus
         corpus = [new_text]
-        metadata_map = [] # To keep track of which index corresponds to which record/doc_type
+        metadata_map = [] 
         
         for record in past_records:
             for dt in ['srs', 'sdd', 'spmp', 'std', 'ri']:
@@ -112,21 +108,14 @@ class ArchivalEngine:
             return None, 0, None, None, None
 
         try:
-            # Vectorize the entire corpus at once (extremely fast compared to looping pairs)
             vectorizer = TfidfVectorizer()
             tfidf_matrix = vectorizer.fit_transform(corpus)
-            
-            # Compare the first document (new_text) against all others
             cosine_similarities = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:]).flatten()
-            
-            # Find the most similar document
             max_sim_idx = cosine_similarities.argmax()
             max_sim_score = cosine_similarities[max_sim_idx]
             
-            # Threshold raised to 99.9% (100% sensitivity) as requested
             if max_sim_score > 0.999:
                 match_meta = metadata_map[max_sim_idx]
-                logger.info(f"AI Plagiarism Match: {max_sim_score:.4f} against {match_meta['title']}")
                 return "Semantic Duplicate", max_sim_score, match_meta['title'], match_meta['id'], match_meta['version']
                 
         except Exception as e:
@@ -136,88 +125,27 @@ class ArchivalEngine:
 
     def download_file(self, file_id, destination_path):
         try:
-            file_metadata = self.service.files().get(fileId=file_id, fields='mimeType, name, size').execute()
+            file_metadata = self.service.files().get(fileId=file_id, fields='mimeType, name').execute()
             mime_type = file_metadata.get('mimeType')
             file_name = file_metadata.get('name')
-            logger.info(f"Attempting to process: {file_name} (Type: {mime_type})")
+            logger.info(f"Downloading: {file_name}")
 
             fh = io.BytesIO()
-            final_ext = ".pdf"
-            
-            # Case 1: Native Google Docs/Sheets
             if 'google-apps.document' in mime_type or 'google-apps.spreadsheet' in mime_type:
-                logger.info(f"Exporting Google Doc {file_name} to PDF...")
                 request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
-                downloader = MediaIoBaseDownload(fh, request)
-                done = False
-                while not done:
-                    status, done = downloader.next_chunk()
-            
-            # Case 2: MS Office Files (.docx, .xlsx)
-            elif 'officedocument.wordprocessingml.document' in mime_type or 'officedocument.spreadsheetml.sheet' in mime_type:
-                logger.info(f"Converting Office file {file_name} to PDF via temporary Google Doc upload...")
-                
-                # Download original bytes
-                media_content = self.service.files().get_media(fileId=file_id).execute()
-                
-                # Upload as a temporary Google Doc
-                temp_metadata = {
-                    'name': f"TEMP_CONV_{file_name}",
-                    'mimeType': 'application/vnd.google-apps.document' if 'document' in mime_type else 'application/vnd.google-apps.spreadsheet'
-                }
-                from googleapiclient.http import MediaIoBaseUpload
-                temp_file = self.service.files().create(
-                    body=temp_metadata,
-                    media_body=MediaIoBaseUpload(io.BytesIO(media_content), mimetype=mime_type),
-                    fields='id'
-                ).execute()
-                temp_id = temp_file.get('id')
-                
-                try:
-                    # Export the temporary Google Doc as PDF
-                    request = self.service.files().export_media(fileId=temp_id, mimeType='application/pdf')
-                    downloader = MediaIoBaseDownload(fh, request)
-                    done = False
-                    while not done:
-                        status, done = downloader.next_chunk()
-                finally:
-                    # CLEANUP: Always delete the temporary conversion file
-                    self.service.files().delete(fileId=temp_id).execute()
-            
-            # Case 3: Already a PDF
-            elif 'pdf' in mime_type:
-                logger.info(f"Downloading {file_name} as direct PDF...")
-                request = self.service.files().get_media(fileId=file_id)
-                downloader = MediaIoBaseDownload(fh, request)
-                done = False
-                while not done:
-                    status, done = downloader.next_chunk()
-            
-            # Case 4: Other files (try direct download)
             else:
-                logger.warning(f"Unknown mime-type {mime_type}, downloading as-is.")
                 request = self.service.files().get_media(fileId=file_id)
-                downloader = MediaIoBaseDownload(fh, request)
-                done = False
-                while not done:
-                    status, done = downloader.next_chunk()
-                final_ext = os.path.splitext(file_name)[1] or ".bin"
 
-            content = fh.getvalue()
-            if len(content) == 0:
-                raise Exception("Downloaded content is empty.")
-
-            # Fix extension if needed
-            if not destination_path.lower().endswith(final_ext.lower()):
-                destination_path = os.path.splitext(destination_path)[0] + final_ext
+            downloader = MediaIoBaseDownload(fh, request)
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
 
             with open(destination_path, 'wb') as f:
-                f.write(content)
-                
-            logger.info(f"Successfully processed {file_name} as {final_ext}")
+                f.write(fh.getvalue())
             return destination_path
         except Exception as e:
-            logger.error(f"Download/Conversion Error for {file_id}: {e}")
+            logger.error(f"Download Error for {file_id}: {e}")
             raise e
 
     def _get_file_metadata(self, file_id):
@@ -232,18 +160,14 @@ class ArchivalEngine:
 
     def archive_project(self, project_data, workbook_name="Archives", batch_id=None):
         project_id = project_data.get('project_id', 'Unknown')
-        # Clean title and ID for folder naming
         clean_title = project_data.get('project_title', 'Untitled').replace(' ', '_').replace('/', '_')
         clean_id = str(project_id).replace(' ', '_').replace('/', '_')
-        
-        # New organized folder name: "Team_1_DriveSafe"
         folder_name = f"{clean_id}_{clean_title}" if clean_id and clean_id != 'None' else clean_title
         academic_year = project_data.get('academic_year')
         
         base_project_dir = os.path.join(self.archive_root, workbook_name, folder_name)
         os.makedirs(base_project_dir, exist_ok=True)
         
-        # 1. Fetch the LATEST record for this project to compare against
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id,
             academic_year=academic_year,
@@ -251,65 +175,53 @@ class ArchivalEngine:
         ).order_by(ArchivalLedger.version.desc()).first()
         
         doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'database', 'readme']
-        results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': None} for dt in doc_types}
+        results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': None, 'ts': None} for dt in doc_types}
         error_msg = ""
         total_changed = 0
-
-        # --- TEAM-LEVEL LINK DEDUPLICATION ---
         processed_file_ids = {}
 
-        # 2. Process each document
-        project_title = project_data.get('project_title', 'Untitled')
         for doc_type in doc_types:
             link = project_data.get(f'{doc_type}_link')
             file_id = self._extract_file_id(link)
             
             if file_id:
                 if file_id in processed_file_ids:
-                    logger.info(f"Team Deduplication: {doc_type.upper()} uses same link as {processed_file_ids[file_id]['source']}. Reusing results.")
                     res = processed_file_ids[file_id]['data']
-                    results[doc_type] = {
-                        'path': res['path'], 'hash': res['hash'], 'text': res.get('text'), 
-                        'bin': res.get('bin'), 'is_changed': res.get('is_changed', False)
-                    }
+                    results[doc_type] = res
                     if res.get('is_changed'): total_changed += 1
                     continue
 
                 try:
-                    # 1. GET FRESH METADATA (Source of Truth for ANY modification)
+                    # 1. GRANULAR METADATA FETCH
                     metadata = self._get_file_metadata(file_id)
                     current_drive_ts = metadata.get('modifiedTime', 'Unknown')
+                    results[doc_type]['ts'] = current_drive_ts
                     
-                    logger.info(f"Checking {doc_type.upper()}: Drive Modified Time: {current_drive_ts}")
-
-                    # 2. TIMESTAMP-LOCKED VERSIONING
-                    # If Google Drive says the file was modified, we ARCHIVE IT. No questions asked.
-                    changed = True
+                    # 2. GRANULAR TIMESTAMP VERSIONING
+                    is_modified = True
                     if last_record:
-                        last_stored_ts = last_record.drive_modified_time
+                        last_stored_ts = getattr(last_record, f"{doc_type}_modified_time")
                         
-                        # Compare stored Google timestamp with current Google timestamp
+                        # IF THE CLOCK HAS MOVED, IT IS A NEW VERSION. 100% SENSITIVE.
                         if last_stored_ts == current_drive_ts:
-                            logger.info(f"RESULT: Timestamp matches vault. Skipping.")
-                            changed = False
+                            logger.info(f"SKIP: {doc_type.upper()} timestamp matches vault ({current_drive_ts}).")
+                            is_modified = False
                         else:
-                            logger.info(f"RESULT: DRIVE MODIFIED! (Old: {last_stored_ts} -> New: {current_drive_ts}). FORCING NEW VERSION.")
-                            # Wait for Google PDF sync
+                            logger.info(f"CHANGE: {doc_type.upper()} modified in Drive! (Vault: {last_stored_ts} -> Drive: {current_drive_ts})")
                             import time
-                            time.sleep(10)
+                            time.sleep(5) # Allow Google Doc to bake PDF
 
-                    if not changed:
+                    if not is_modified:
                         results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                         results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                         results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
                         results[doc_type]['bin'] = None
-                        processed_file_ids[file_id] = {'source': doc_type, 'data': results[doc_type]}
+                        processed_file_ids[file_id] = {'data': results[doc_type]}
                         continue
 
-                    # 3. ARCHIVE THE NEW VERSION
+                    # 3. PROCESS THE NEW VERSION
                     doc_dir = os.path.join(base_project_dir, doc_type.upper())
                     os.makedirs(doc_dir, exist_ok=True)
-                    
                     temp_path = os.path.join(doc_dir, f"COMPARE_{doc_type.upper()}.pdf")
                     actual_temp_path = self.download_file(file_id, temp_path)
                     
@@ -317,133 +229,76 @@ class ArchivalEngine:
                         file_binary = f.read()
                         results[doc_type]['bin'] = file_binary
                     
-                    file_hash = self._compute_hash(actual_temp_path)
+                    file_hash = metadata.get('md5Checksum') or self._compute_hash(actual_temp_path)
                     results[doc_type]['hash'] = file_hash
                     
-                    # AI Text Extraction
                     file_text = ""
                     if doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'readme']:
                         file_text = self._extract_text_from_pdf(actual_temp_path)
                     results[doc_type]['text'] = file_text
 
                     if last_record and file_text:
-                        # 4. Plagiarism Check (Cross-project)
-                        dup_type, score, orig_title, orig_project_id, _ = self.check_for_duplicates(file_hash, file_text, current_project_id=project_id)
-                        if dup_type and orig_project_id != project_id:
-                            results[doc_type]['dup'] = f"Warning: Similar to {orig_title}"
+                        dup_type, score, orig_title, _, _ = self.check_for_duplicates(file_hash, file_text, current_project_id=project_id)
                     
-                    if changed:
-                        total_changed += 1
-                        results[doc_type]['is_changed'] = True
-                        
-                        from sqlalchemy import func
-                        prev_doc_versions = db.session.query(func.count(ArchivalLedger.id)).filter(
-                            ArchivalLedger.project_id == project_id,
-                            getattr(ArchivalLedger, f"{doc_type}_hash").isnot(None)
-                        ).scalar()
-                        
-                        doc_v = (prev_doc_versions or 0) + 1
-                        ext = os.path.splitext(actual_temp_path)[1]
-                        final_name = f"{clean_title}_{doc_type.upper()}_v{doc_v}{ext}"
-                        final_path = os.path.join(doc_dir, final_name)
-                        
-                        # Collision safety
-                        v_safe = doc_v
-                        while os.path.exists(final_path):
-                            v_safe += 1
-                            final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{v_safe}{ext}")
-
-                        os.rename(actual_temp_path, final_path)
-                        results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
+                    total_changed += 1
+                    results[doc_type]['is_changed'] = True
                     
-                    processed_file_ids[file_id] = {'source': doc_type, 'data': results[doc_type]}
+                    from sqlalchemy import func
+                    prev_doc_versions = db.session.query(func.count(ArchivalLedger.id)).filter(
+                        ArchivalLedger.project_id == project_id,
+                        getattr(ArchivalLedger, f"{doc_type}_hash").isnot(None)
+                    ).scalar()
+                    
+                    doc_v = (prev_doc_versions or 0) + 1
+                    ext = os.path.splitext(actual_temp_path)[1]
+                    final_name = f"{clean_title}_{doc_type.upper()}_v{doc_v}{ext}"
+                    final_path = os.path.join(doc_dir, final_name)
+                    
+                    os.rename(actual_temp_path, final_path)
+                    results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
+                    processed_file_ids[file_id] = {'data': results[doc_type]}
                         
                 except Exception as e:
                     error_msg += f"{doc_type.upper()} Error: {str(e)}; "
 
         if total_changed == 0 and last_record:
-            return {
-                'status': 'unchanged',
-                'message': 'No changes detected based on Google Drive timestamps.',
-                'version': last_record.version
-            }
+            return {'status': 'unchanged', 'message': 'No changes detected in Google Drive timestamps.', 'version': last_record.version}
 
         current_version = (last_record.version if last_record else 0) + 1
         status = "archived" if not error_msg else "failed"
 
-        # Capture the latest Drive timestamp
-        master_drive_ts = "Unknown"
-        for doc in doc_types:
-             link = project_data.get(f'{doc}_link')
-             if link:
-                 meta = self._get_file_metadata(self._extract_file_id(link))
-                 if meta: 
-                     master_drive_ts = meta.get('modifiedTime', 'Unknown')
-                     break
-
         if status == "archived":
             ledger_entry = ArchivalLedger(
-                project_id=project_id,
-                project_title=project_data.get('project_title'),
-                academic_year=academic_year,
-                workbook_name=workbook_name,
-                drive_modified_time=master_drive_ts, # LOCK THE TIMESTAMP
-                srs_original_url=project_data.get('srs_link'),
-                sdd_original_url=project_data.get('sdd_link'),
-                spmp_original_url=project_data.get('spmp_link'),
-                std_original_url=project_data.get('std_link'),
-                ri_original_url=project_data.get('ri_link'),
-                source_code_original_url=project_data.get('source_code_link'),
-                github_original_url=project_data.get('github_link'),
-                database_original_url=project_data.get('database_link'),
+                project_id=project_id, project_title=project_data.get('project_title'),
+                academic_year=academic_year, workbook_name=workbook_name,
+                srs_modified_time=results['srs']['ts'], sdd_modified_time=results['sdd']['ts'],
+                spmp_modified_time=results['spmp']['ts'], std_modified_time=results['std']['ts'],
+                ri_modified_time=results['ri']['ts'], source_code_modified_time=results['source_code']['ts'],
+                database_modified_time=results['database']['ts'], readme_modified_time=results['readme']['ts'],
+                srs_original_url=project_data.get('srs_link'), sdd_original_url=project_data.get('sdd_link'),
+                spmp_original_url=project_data.get('spmp_link'), std_original_url=project_data.get('std_link'),
+                ri_original_url=project_data.get('ri_link'), source_code_original_url=project_data.get('source_code_link'),
+                github_original_url=project_data.get('github_link'), database_original_url=project_data.get('database_link'),
                 readme_original_url=project_data.get('readme_link'),
-
-                srs_local_path=results['srs']['path'],
-                sdd_local_path=results['sdd']['path'],
-                spmp_local_path=results['spmp']['path'],
-                std_local_path=results['std']['path'],
-                ri_local_path=results['ri']['path'],
-                source_code_local_path=results['source_code']['path'],
-                database_local_path=results['database']['path'],
-                readme_local_path=results['readme']['path'],
-
-                srs_hash=results['srs']['hash'],
-                sdd_hash=results['sdd']['hash'],
-                spmp_hash=results['spmp']['hash'],
-                std_hash=results['std']['hash'],
-                ri_hash=results['ri']['hash'],
-                source_code_hash=results['source_code']['hash'],
-                database_hash=results['database']['hash'],
-                readme_hash=results['readme']['hash'],
-
-                srs_binary=results['srs']['bin'],
-                sdd_binary=results['sdd']['bin'],
-                spmp_binary=results['spmp']['bin'],
-                std_binary=results['std']['bin'],
-                ri_binary=results['ri']['bin'],
-                source_code_binary=results['source_code']['bin'],
-                database_binary=results['database']['bin'],
-                readme_binary=results['readme']['bin'],
-                
-                srs_text=results['srs'].get('text'),
-                sdd_text=results['sdd'].get('text'),
-                spmp_text=results['spmp'].get('text'),
-                std_text=results['std'].get('text'),
-                ri_text=results['ri'].get('text'),
-                readme_text=results['readme'].get('text'),
-
-                status=status,
-                version=current_version,
-                batch_id=batch_id,
-                error_message=error_msg.strip(),
-                archived_at=datetime.datetime.utcnow()
+                srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
+                spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
+                ri_local_path=results['ri']['path'], source_code_local_path=results['source_code']['path'],
+                database_local_path=results['database']['path'], readme_local_path=results['readme']['path'],
+                srs_hash=results['srs']['hash'], sdd_hash=results['sdd']['hash'],
+                spmp_hash=results['spmp']['hash'], std_hash=results['std']['hash'],
+                ri_hash=results['ri']['hash'], source_code_hash=results['source_code']['hash'],
+                database_hash=results['database']['hash'], readme_hash=results['readme']['hash'],
+                srs_binary=results['srs']['bin'], sdd_binary=results['sdd']['bin'],
+                spmp_binary=results['spmp']['bin'], std_binary=results['std']['bin'],
+                ri_binary=results['ri']['bin'], source_code_binary=results['source_code']['bin'],
+                database_binary=results['database']['bin'], readme_binary=results['readme']['bin'],
+                srs_text=results['srs'].get('text'), sdd_text=results['sdd'].get('text'),
+                spmp_text=results['spmp'].get('text'), std_text=results['std'].get('text'),
+                ri_text=results['ri'].get('text'), readme_text=results['readme'].get('text'),
+                status=status, version=current_version, batch_id=batch_id,
+                error_message=error_msg.strip(), archived_at=datetime.datetime.utcnow()
             )
             db.session.add(ledger_entry)
             db.session.commit()
         
-        return {
-            'status': status, 
-            'version': current_version,
-            'paths': {dt: results[dt]['path'] for dt in doc_types},
-            'error': error_msg.strip()
-        }
+        return {'status': status, 'version': current_version, 'paths': {dt: results[dt]['path'] for dt in doc_types}, 'error': error_msg.strip()}

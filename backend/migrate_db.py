@@ -10,38 +10,41 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def migrate():
-    # Load environment variables
     load_dotenv()
     
     app = Flask(__name__)
-    # Correct key is SQLALCHEMY_DATABASE_URI
     app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     
-    # Initialize DB
     db.init_app(app)
     
     with app.app_context():
         try:
-            logger.info("Checking for 'batch_id' column in 'archival_ledger' table...")
+            logger.info("Starting Per-File Precision Migration...")
             
-            # Check if column exists
-            # Using raw SQL for the check to be database-agnostic
-            result = db.session.execute(text("SHOW COLUMNS FROM archival_ledger LIKE 'batch_id'")).fetchone()
+            # List of new columns to add
+            columns = [
+                'srs_modified_time', 'sdd_modified_time', 'spmp_modified_time', 
+                'std_modified_time', 'ri_modified_time', 'source_code_modified_time',
+                'database_modified_time', 'readme_modified_time'
+            ]
             
-            if not result:
-                logger.info("Column 'batch_id' not found. Adding it now...")
-                db.session.execute(text("ALTER TABLE archival_ledger ADD COLUMN batch_id VARCHAR(50) AFTER version"))
+            for col in columns:
+                result = db.session.execute(text(f"SHOW COLUMNS FROM archival_ledger LIKE '{col}'")).fetchone()
+                if not result:
+                    logger.info(f"Adding column '{col}'...")
+                    db.session.execute(text(f"ALTER TABLE archival_ledger ADD COLUMN {col} VARCHAR(100)"))
+                    db.session.commit()
+            
+            # Drop old redundant column if it exists
+            try:
+                db.session.execute(text("ALTER TABLE archival_ledger DROP COLUMN drive_modified_time"))
                 db.session.commit()
-                logger.info("Migration successful: 'batch_id' column added.")
+                logger.info("Dropped old 'drive_modified_time' column.")
+            except:
+                pass
 
-            # Add drive_modified_time column
-            result_mt = db.session.execute(text("SHOW COLUMNS FROM archival_ledger LIKE 'drive_modified_time'")).fetchone()
-            if not result_mt:
-                logger.info("Column 'drive_modified_time' not found. Adding it now...")
-                db.session.execute(text("ALTER TABLE archival_ledger ADD COLUMN drive_modified_time VARCHAR(100) AFTER batch_id"))
-                db.session.commit()
-                logger.info("Migration successful: 'drive_modified_time' column added.")
+            logger.info("Migration successful: Per-file precision enabled.")
                 
         except Exception as e:
             logger.error(f"Migration failed: {e}")
