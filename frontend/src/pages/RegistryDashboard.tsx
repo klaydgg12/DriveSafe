@@ -49,6 +49,7 @@ const RegistryDashboard: React.FC = () => {
     const [years, setYears] = useState<string[]>([]);
     const [selectedYear, setSelectedYear] = useState<string>('');
     const [projects, setProjects] = useState<Project[]>([]);
+    const [availableDocs, setAvailableDocs] = useState<string[]>([]);
     const [selectedRows, setSelectedRows] = useState<number[]>([]);
     const [validationResults, setValidationResults] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState<boolean>(false);
@@ -128,7 +129,17 @@ const RegistryDashboard: React.FC = () => {
         if (!silent) setLoading(true);
         try {
             const res = await axios.get(`/api/registry/projects?year=${year}&sheet_id=${workbookId}`, { withCredentials: true });
-            setProjects(res.data);
+            
+            // NEW: Handle the object format with available_docs
+            if (res.data.projects) {
+                setProjects(res.data.projects);
+                setAvailableDocs(res.data.available_docs || []);
+            } else {
+                // Fallback for old API versions
+                setProjects(Array.isArray(res.data) ? res.data : []);
+                setAvailableDocs(['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'github', 'database', 'readme']);
+            }
+
             if (!silent) {
                 setSelectedRows([]);
                 setValidationResults({});
@@ -468,7 +479,7 @@ const RegistryDashboard: React.FC = () => {
                                                         { id: 'github', label: 'GH', color: 'slate' },
                                                         { id: 'database', label: 'DB', color: 'cyan' },
                                                         { id: 'readme', label: 'RM', color: 'gray' }
-                                                    ].map(doc => {
+                                                    ].filter(doc => availableDocs.includes(doc.id)).map(doc => {
                                                         const link = p[`${doc.id}_link` as keyof Project] as string;
                                                         const isAccessible = validationResults[link] === 'Accessible';
                                                         const isMissing = !link;

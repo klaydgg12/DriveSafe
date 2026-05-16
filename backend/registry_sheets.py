@@ -78,31 +78,23 @@ class RegistrySheetsService:
             return {}
 
         mapping = {}
-        # Define keywords to search for in headers
+        # Define keywords to search for in headers (Using specific phrases to avoid overlap)
         keywords = {
-            'project_id': ['team code', 'team id', 'id', 'project id', 'id number'],
-            'project_title': ['project title', 'title'], # Primary title
-            'student_name': ['student name', 'name', 'representative'], # Secondary metadata
-            'srs_link': ['srs'],
-            'sdd_link': ['sdd'],
-            'spmp_link': ['spmp'],
-            'std_link': ['std'],
-            'ri_link': ['ri link', 'ri', 'requirements inventory'],
-            'source_code_link': ['source code (zipped)', 'source code', 'zipped'],
-            'github_link': ['github'],
-            'database_link': ['exported / dumped database', 'database', 'dump'],
-            'readme_link': ['readme'],
+            'project_id': ['team code', 'team id', 'project id', 'id number'],
+            'project_title': ['project title', 'title'],
+            'student_name': ['student name', 'representative name'],
+            'srs_link': ['1. srs', 'srs link', 'srs file'],
+            'sdd_link': ['3. sdd', 'sdd link', 'sdd file'],
+            'spmp_link': ['2. spmp', 'spmp link', 'spmp file'],
+            'std_link': ['4. std', 'std link', 'std file'],
+            'ri_link': ['requirements inventory', 'ri link', 'ri file'],
+            'source_code_link': ['5. source code', 'source code (zipped)', 'zipped source'],
+            'github_link': ['6. source code (github)', 'github link'],
+            'database_link': ['7. exported / dumped database', 'database link', 'sql dump'],
+            'readme_link': ['8. readme', 'readme link'],
             'status': ['status'],
-            'last_updated': ['timestamp', 'last updated', 'updated at'],
-            'srs_path': ['srs path', 'srs_local'],
-            'sdd_path': ['sdd path', 'sdd_local'],
-            'spmp_path': ['spmp path', 'spmp_local'],
-            'std_path': ['std path', 'std_local'],
-            'ri_path': ['ri path', 'ri_local'],
-            'source_code_path': ['source_code_local'],
-            'database_path': ['database_local'],
-            'readme_path': ['readme_local'],
-            'error': ['error', 'message', 'error message']
+            'last_updated': ['timestamp', 'last updated'],
+            'error': ['error message', 'error']
         }
 
         for key, synonyms in keywords.items():
