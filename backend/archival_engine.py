@@ -49,7 +49,7 @@ class ArchivalEngine:
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v14 Initialized (Triple-Key Protocol)")
+        logger.info(f"ArchivalEngine Master v15 Initialized (Digital DNA Mode)")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -92,6 +92,15 @@ class ArchivalEngine:
             logger.error(f"Folder resolution failed for {folder_id}: {e}")
             return None, None
 
+    def _extract_text_from_pdf(self, file_path):
+        try:
+            text = ""
+            with pdfplumber.open(file_path) as pdf:
+                for page in pdf.pages[:20]: 
+                    text += (page.extract_text() or "")
+            return text
+        except: return ""
+
     def validate_binary(self, data, is_pdf=True):
         if not data or len(data) < 500: return False
         content_sample = data[:2000].lower()
@@ -102,7 +111,6 @@ class ArchivalEngine:
         return True
 
     def _construct_url(self, file_id, original_url=None, is_google_doc=True, clean=False, inject_token=None):
-        """Builds URL with Triple-Key Protocol support"""
         params = {'format': 'pdf'}
         if not is_google_doc:
             params = {'export': 'download', 'id': file_id, 'confirm': 't'}
@@ -130,11 +138,11 @@ class ArchivalEngine:
         is_google = 'google-apps' in mime_type or (original_url and 'docs.google.com' in str(original_url))
         is_pdf_target = destination_path.lower().endswith('.pdf')
         
-        logger.info(f"[{self.identity_label}] TRIPLE-KEY ARCHIVE: {file_name}")
+        logger.info(f"[{self.identity_label}] DOWNLOADING: {file_name}")
 
         final_data = None
         
-        # --- PHASE 1: STEALTH MIRROR (Digital Twin) ---
+        # Phase 1: Digital Twin
         try:
             url = self._construct_url(file_id, original_url, is_google_doc=is_google)
             headers = {
@@ -152,20 +160,18 @@ class ArchivalEngine:
                 final_data = resp.content
         except: pass
 
-        # --- PHASE 2: MASTER KEY INJECTION (Token in URL) ---
+        # Phase 2: Token Injection
         if not final_data and self.creds:
             try:
-                logger.info(f"   [FALLBACK] Attempting Phase 2: Token Injection...")
                 url = self._construct_url(file_id, original_url, is_google_doc=is_google, inject_token=self.creds.token)
                 resp = self.session.get(url, timeout=60, allow_redirects=True)
                 if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=is_pdf_target):
                     final_data = resp.content
             except: pass
 
-        # --- PHASE 3: OFFICIAL API ---
+        # Phase 3: Official API
         if not final_data:
             try:
-                logger.info(f"   [FALLBACK] Attempting Phase 3: Official API...")
                 fh = io.BytesIO()
                 if is_google: request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
                 else: request = self.service.files().get_media(fileId=file_id)
@@ -177,7 +183,7 @@ class ArchivalEngine:
             except: pass
 
         if not final_data:
-            raise Exception("Access Denied (Google Lock remains despite Triple-Key protocol)")
+            raise Exception("Access Denied (Google Lock)")
 
         # Word to PDF conversion
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
@@ -245,9 +251,11 @@ class ArchivalEngine:
                 is_modified = True
                 if last_record:
                     vault_hash = getattr(last_record, f"{doc_type}_hash")
+                    # Step 1: Check MD5 (Best for non-docs)
                     if drive_md5 and vault_hash and drive_md5 == vault_hash:
                         is_modified = False
                     else:
+                        # Step 2: Check Time (2s jitter)
                         try:
                             drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
                             vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
@@ -269,15 +277,39 @@ class ArchivalEngine:
                     final_bytes = self.download_file(file_id, temp_path, original_url=link)
                     new_hash = hashlib.sha256(final_bytes).hexdigest()
                     
-                    if last_record and new_hash == getattr(last_record, f"{doc_type}_hash"):
-                        results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                        results[doc_type]['hash'] = new_hash
-                        results[doc_type]['bin'] = b''
-                        if os.path.exists(temp_path): os.remove(temp_path)
-                        continue
+                    # --- NEW STEP 3: DIGITAL DNA (TEXT COMPARISON) ---
+                    new_text = ""
+                    # We only check DNA for textual documents
+                    is_text_doc = doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'readme']
+                    if is_text_doc:
+                        new_text = self._extract_text_from_pdf(temp_path)
+                    
+                    if last_record:
+                        old_hash = getattr(last_record, f"{doc_type}_hash")
+                        old_text = getattr(last_record, f"{doc_type}_text")
+                        
+                        if is_text_doc:
+                            # If text is identical, ignore invisible metadata changes
+                            if new_text and old_text and new_text.strip() == old_text.strip():
+                                logger.info(f"DEDUPLICATED (DNA): {doc_type.upper()} text matches vault.")
+                                results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                                results[doc_type]['hash'] = old_hash
+                                results[doc_type]['text'] = old_text
+                                results[doc_type]['bin'] = b''
+                                if os.path.exists(temp_path): os.remove(temp_path)
+                                continue
+                        else:
+                            # For binary files (source code/db), bits must match perfectly
+                            if new_hash == old_hash:
+                                results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                                results[doc_type]['hash'] = old_hash
+                                results[doc_type]['bin'] = b''
+                                if os.path.exists(temp_path): os.remove(temp_path)
+                                continue
 
                     results[doc_type]['bin'] = final_bytes
                     results[doc_type]['hash'] = new_hash
+                    results[doc_type]['text'] = new_text
                     total_changed += 1
                     results[doc_type]['is_changed'] = True
                     current_rev = last_record.version if last_record else 0
@@ -290,8 +322,7 @@ class ArchivalEngine:
                         results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                         results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
                         recovered_from_vault += 1
-                    else:
-                        raise e
+                    else: raise e
 
             except Exception as e:
                 error_msg += f"{doc_type.upper()}: {str(e)[:30]}; "
