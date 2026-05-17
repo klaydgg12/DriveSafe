@@ -423,10 +423,16 @@ const RegistryDashboard: React.FC = () => {
                                             {renderSortIcon('project_title')}
                                         </div>
                                     </th>
-                                    {statusFilter !== 'Failed' && (
-                                        <th className="px-4 py-4 w-[280px]"><span className="text-[10px] font-black text-slate-400 tracking-[0.2em] uppercase">Deliverables</span></th>
+                                    {statusFilter === 'Failed' ? (
+                                        <th className="px-4 py-4 min-w-[300px]">
+                                            <span className="text-[10px] font-black text-slate-400 tracking-[0.2em] uppercase">Error Details</span>
+                                        </th>
+                                    ) : (
+                                        <th className="px-4 py-4 w-[280px]">
+                                            <span className="text-[10px] font-black text-slate-400 tracking-[0.2em] uppercase">Deliverables</span>
+                                        </th>
                                     )}
-                                    <th onClick={() => handleSort('status')} className={`px-6 py-4 cursor-pointer group text-right ${statusFilter === 'Failed' ? 'w-[400px]' : 'w-40'}`}>
+                                    <th onClick={() => handleSort('status')} className="px-6 py-4 cursor-pointer group text-right w-40">
                                         <div className="flex items-center justify-end gap-2">
                                             <span className="text-[10px] font-black text-slate-400 tracking-[0.2em] uppercase">Status</span>
                                             {renderSortIcon('status')}
@@ -437,7 +443,7 @@ const RegistryDashboard: React.FC = () => {
                             <tbody className="divide-y divide-slate-50">
                                 {loading && projects.length === 0 ? (
                                     <tr>
-                                        <td colSpan={statusFilter === 'Failed' ? 4 : 5} className="px-4 py-32">
+                                        <td colSpan={5} className="px-4 py-32">
                                             <div className="flex flex-col items-center gap-3">
                                                 <RefreshCw className="w-10 h-10 text-indigo-600 animate-spin" />
                                                 <p className="text-slate-400 font-black uppercase tracking-widest text-[10px]">Synchronizing Pipeline...</p>
@@ -446,7 +452,7 @@ const RegistryDashboard: React.FC = () => {
                                     </tr>
                                 ) : paginatedProjects.length === 0 ? (
                                     <tr>
-                                        <td colSpan={statusFilter === 'Failed' ? 4 : 5} className="px-4 py-32">
+                                        <td colSpan={5} className="px-4 py-32">
                                             <div className="flex flex-col items-center gap-4 max-w-sm mx-auto text-center">
                                                 <div className="w-20 h-20 bg-slate-50 rounded-[2rem] flex items-center justify-center text-slate-200 border border-slate-100 shadow-inner">
                                                     <FilterX className="w-10 h-10" />
@@ -474,7 +480,20 @@ const RegistryDashboard: React.FC = () => {
                                                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">{p.academic_year}</span>
                                                 </div>
                                             </td>
-                                            {statusFilter !== 'Failed' && (
+                                            {statusFilter === 'Failed' ? (
+                                                <td className="px-4 py-4">
+                                                    {p.error_message ? (
+                                                        <div className="flex items-start gap-2 text-red-500 bg-red-50/50 p-2 rounded-xl border border-red-100/50 max-w-[400px]">
+                                                            <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                                                            <p className="text-[11px] font-bold leading-tight line-clamp-3">
+                                                                {p.error_message}
+                                                            </p>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-[10px] font-black text-slate-300 italic uppercase">No details logged</span>
+                                                    )}
+                                                </td>
+                                            ) : (
                                                 <td className="px-4 py-4">
                                                     <div className="flex flex-wrap items-center gap-1.5 max-w-[400px]">
                                                         {[
@@ -524,13 +543,6 @@ const RegistryDashboard: React.FC = () => {
                                             )}
                                             <td className="px-6 py-4 text-right">
                                                 <div className="flex items-center justify-end gap-3 group/status">
-                                                    {statusFilter === 'Failed' && p.error_message && (
-                                                        <div className="flex-1 text-left mr-4 max-w-[300px]">
-                                                            <p className="text-[10px] font-bold text-red-500 uppercase leading-tight line-clamp-2">
-                                                                {p.error_message}
-                                                            </p>
-                                                        </div>
-                                                    )}
                                                     {getStatusBadge(p.status, p.latest_version, p.error_message)}
                                                     {(p.status.toLowerCase() === 'archived' || p.status.toLowerCase() === 'failed' || p.status.toLowerCase() === 'partial') && (
                                                         <button 
