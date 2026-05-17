@@ -5,6 +5,7 @@ import hashlib
 import datetime
 import logging
 import pdfplumber
+import time
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from oauth2client.service_account import ServiceAccountCredentials
@@ -160,8 +161,8 @@ class ArchivalEngine:
                     raise export_err
             
             # Case 2: MS Word (.docx) or Markdown (.md) - AUTO-CONVERT TO PDF
-            elif 'officedocument.wordprocessingml.document' in mime_type or file_name.endswith('.md') or mime_type == 'text/markdown' or mime_type == 'text/plain':
-                logger.info(f"Converting {file_name} to PDF via temporary Google Doc...")
+            elif 'officedocument.wordprocessingml.document' in mime_type or file_name.lower().endswith('.md') or 'markdown' in mime_type or 'text/plain' in mime_type:
+                logger.info(f"Converting {file_name} to PDF via high-fidelity Google engine...")
                 
                 # 1. Download raw content
                 raw_fh = io.BytesIO()
@@ -172,17 +173,20 @@ class ArchivalEngine:
                 
                 # 2. Upload to Google Docs for conversion
                 temp_metadata = {
-                    'name': f"TEMP_CONV_{file_name}",
+                    'name': f"DRIVESAFE_CONV_{int(time.time())}",
                     'mimeType': 'application/vnd.google-apps.document'
                 }
-                upload_mime = mime_type
-                if file_name.endswith('.md'): upload_mime = 'text/plain'
+                # Treat Markdown as plain text so Google Docs can import/render it
+                upload_mime = 'text/plain' if file_name.lower().endswith('.md') or 'markdown' in mime_type else mime_type
                 
                 media = MediaIoBaseUpload(io.BytesIO(raw_fh.getvalue()), mimetype=upload_mime, resumable=True)
                 temp_file = self.service.files().create(body=temp_metadata, media_body=media, fields='id').execute()
                 temp_id = temp_file.get('id')
                 
                 try:
+                    # CRITICAL: Wait 2 seconds for Google to process the upload before exporting
+                    time.sleep(2)
+
                     # 3. Export the temporary Doc as PDF
                     request = self.service.files().export_media(fileId=temp_id, mimeType='application/pdf')
                     downloader = MediaIoBaseDownload(fh, request)
@@ -191,7 +195,9 @@ class ArchivalEngine:
                         _, done = downloader.next_chunk()
                 finally:
                     # 4. Clean up temporary file
-                    self.service.files().delete(fileId=temp_id).execute()
+                    try:
+                        self.service.files().delete(fileId=temp_id).execute()
+                    except: pass
 
             # Case 3: Already a PDF or other asset
             else:
@@ -201,8 +207,14 @@ class ArchivalEngine:
                 while not done:
                     status, done = downloader.next_chunk()
 
+            # --- VALIDATION: Ensure we actually got a PDF ---
+            file_data = fh.getvalue()
+            if len(file_data) > 0:
+                if not file_data.startswith(b'%PDF-') and not mime_type.startswith('image'):
+                     logger.warning(f"Validation Warning: {file_name} downloaded but does not have %PDF- header.")
+            
             with open(destination_path, 'wb') as f:
-                f.write(fh.getvalue())
+                f.write(file_data)
             return destination_path
         except Exception as e:
             logger.error(f"Download Error for {file_id}: {e}")
@@ -280,7 +292,6 @@ class ArchivalEngine:
                     continue
 
                 # 3. PROCESS THE NEW VERSION
-                import time
                 time.sleep(5) 
 
                 doc_dir = os.path.join(base_project_dir, doc_type.upper())
@@ -317,7 +328,8 @@ class ArchivalEngine:
                     if file_text and last_text:
                         vectorizer = TfidfVectorizer().fit_transform([file_text, last_text])
                         sim = cosine_similarity(vectorizer)[0][1]
-                        if sim > 0.999:
+                        if sim > 0.999: # 99.9% identical
+                            logger.info(f"SEMANTIC MATCH: {doc_type.upper()} is identical to last version content. Skipping.")
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                             results[doc_type]['is_changed'] = False
                             processed_file_ids[file_id] = {'data': results[doc_type]}
