@@ -54,8 +54,8 @@ class ArchivalEngine:
         if match_id: return match_id.group(1), False
         return None, False
 
-    def _resolve_folder(self, folder_id):
-        """Find the best file inside a Google Drive folder"""
+    def _resolve_folder(self, folder_id, target_hint=None):
+        """Find the best file inside a Google Drive folder, using hints if available"""
         try:
             query = f"'{folder_id}' in parents and trashed = false"
             results = self.service.files().list(
@@ -66,7 +66,13 @@ class ArchivalEngine:
             files = results.get('files', [])
             if not files: return None, None
             
-            # Prefer PDFs, then Google Docs
+            # Step 1: Look for exact name match (e.g. if we want SRS, look for "SRS" in filename)
+            if target_hint:
+                hint = target_hint.lower()
+                for f in files:
+                    if hint in f['name'].lower(): return f['id'], f
+
+            # Step 2: Prefer PDFs, then Google Docs
             for f in files:
                 if 'pdf' in f['mimeType'].lower(): return f['id'], f
             for f in files:
@@ -135,44 +141,23 @@ class ArchivalEngine:
             file_metadata = self.service.files().get(fileId=file_id, fields='mimeType, name').execute()
             mime_type = file_metadata.get('mimeType')
             file_name = file_metadata.get('name')
-            logger.info(f"Downloading: {file_name} ({mime_type})")
+            logger.info(f"Downloading: {file_name}")
 
             fh = io.BytesIO()
-            
-            # Case 1: Native Google Docs/Sheets
             if 'google-apps.document' in mime_type or 'google-apps.spreadsheet' in mime_type:
                 logger.info(f"Exporting Google Doc {file_name} to PDF...")
-                request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
-                downloader = MediaIoBaseDownload(fh, request)
-                done = False
-                while not done:
-                    status, done = downloader.next_chunk()
-            
-            # Case 2: MS Office Files (.docx, .xlsx) - RESTORED LOGIC
-            elif 'officedocument.wordprocessingml.document' in mime_type or 'officedocument.spreadsheetml.sheet' in mime_type:
-                logger.info(f"Converting Office file {file_name} to PDF...")
-                media_content = self.service.files().get_media(fileId=file_id).execute()
-                temp_metadata = {
-                    'name': f"TEMP_CONV_{file_name}",
-                    'mimeType': 'application/vnd.google-apps.document' if 'document' in mime_type else 'application/vnd.google-apps.spreadsheet'
-                }
-                temp_file = self.service.files().create(
-                    body=temp_metadata,
-                    media_body=MediaIoBaseUpload(io.BytesIO(media_content), mimetype=mime_type),
-                    fields='id'
-                ).execute()
-                temp_id = temp_file.get('id')
                 try:
-                    request = self.service.files().export_media(fileId=temp_id, mimeType='application/pdf')
+                    request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
                     downloader = MediaIoBaseDownload(fh, request)
                     done = False
                     while not done:
                         status, done = downloader.next_chunk()
-                finally:
-                    self.service.files().delete(fileId=temp_id).execute()
-            
-            # Case 3: Already a PDF or other binary
+                except Exception as export_err:
+                    if "exportSizeLimitExceeded" in str(export_err):
+                        raise Exception("File too large for Google to convert. Please upload as a PDF file directly.")
+                    raise export_err
             else:
+                # Direct download for PDFs and non-Google assets
                 request = self.service.files().get_media(fileId=file_id)
                 downloader = MediaIoBaseDownload(fh, request)
                 done = False
@@ -201,6 +186,7 @@ class ArchivalEngine:
         base_project_dir = os.path.join(self.archive_root, workbook_name, folder_name)
         os.makedirs(base_project_dir, exist_ok=True)
         
+        # Get the latest version in the vault
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id, academic_year=academic_year, status='archived'
         ).order_by(ArchivalLedger.version.desc()).first()
@@ -218,7 +204,8 @@ class ArchivalEngine:
             
             file_id = raw_id
             if is_folder:
-                file_id, folder_meta = self._resolve_folder(raw_id)
+                # Use target_hint to find the right file in the folder (e.g. search for "SRS")
+                file_id, folder_meta = self._resolve_folder(raw_id, target_hint=doc_type.upper())
                 if not file_id:
                     error_msg += f"{doc_type.upper()}: Folder is empty; "
                     continue
@@ -230,6 +217,7 @@ class ArchivalEngine:
                 continue
 
             try:
+                # 1. FETCH LIVE CLOCK FROM GOOGLE
                 metadata = self._get_file_metadata(file_id)
                 if not metadata:
                     error_msg += f"{doc_type.upper()}: Access Denied; "
@@ -238,6 +226,7 @@ class ArchivalEngine:
                 current_drive_ts = metadata.get('modifiedTime', 'Unknown')
                 results[doc_type]['ts'] = current_drive_ts
 
+                # 2. RELIABLE TIMESTAMP VERSIONING
                 is_modified = True
                 if last_record and last_record.archived_at and current_drive_ts != 'Unknown':
                     try:
@@ -245,19 +234,22 @@ class ArchivalEngine:
                         vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc) + datetime.timedelta(seconds=3)
                         if drive_dt <= vault_dt:
                             is_modified = False
+                            logger.info(f"UNCHANGED: {doc_type.upper()} matches vault timestamp.")
                     except: pass
 
                 if not is_modified:
                     results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                     results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                     results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
+                    results[doc_type]['bin'] = None
                     processed_file_ids[file_id] = {'data': results[doc_type]}
                     continue
 
+                # 3. PROCESS THE NEW VERSION
                 import time
                 time.sleep(5) 
 
-                doc_dir = os.path.join(base_project_dir, doc_type.upper())
+                doc_dir = os.path.join(self.archive_root, workbook_name, folder_name, doc_type.upper())
                 os.makedirs(doc_dir, exist_ok=True)
                 temp_path = os.path.join(doc_dir, f"TEMP_{doc_type.upper()}.pdf")
 
@@ -289,7 +281,8 @@ class ArchivalEngine:
                     if file_text and last_text:
                         vectorizer = TfidfVectorizer().fit_transform([file_text, last_text])
                         sim = cosine_similarity(vectorizer)[0][1]
-                        if sim > 0.999:
+                        if sim > 0.999: # 99.9% identical
+                            logger.info(f"SEMANTIC MATCH: {doc_type.upper()} is identical to last version content. Skipping.")
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                             results[doc_type]['is_changed'] = False
                             processed_file_ids[file_id] = {'data': results[doc_type]}
@@ -316,7 +309,7 @@ class ArchivalEngine:
                 error_msg += f"{doc_type.upper()} System Error; "
 
         if total_changed == 0 and last_record:
-            return {'status': 'unchanged', 'message': 'No edits found.', 'version': last_record.version}
+            return {'status': 'unchanged', 'message': 'No edits found in Google Drive since last archive.', 'version': last_record.version}
 
         current_version = (last_record.version if last_record else 0) + 1
         status = "archived" if not error_msg else "failed"
@@ -330,21 +323,36 @@ class ArchivalEngine:
                 ri_original_url=project_data.get('ri_link'), source_code_original_url=project_data.get('source_code_link'),
                 github_original_url=project_data.get('github_link'), database_original_url=project_data.get('database_link'),
                 readme_original_url=project_data.get('readme_link'),
-                srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
-                spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
-                ri_local_path=results['ri']['path'], source_code_local_path=results['source_code']['path'],
-                database_local_path=results['database']['path'], readme_local_path=results['readme']['path'],
-                srs_hash=results['srs']['hash'], sdd_hash=results['sdd']['hash'],
-                spmp_hash=results['spmp']['hash'], std_hash=results['std']['hash'],
-                ri_hash=results['ri']['hash'], source_code_hash=results['source_code']['hash'],
-                database_hash=results['database']['hash'], readme_hash=results['readme']['hash'],
-                srs_binary=results['srs']['bin'], sdd_binary=results['sdd']['bin'],
-                spmp_binary=results['spmp']['bin'], std_binary=results['std']['bin'],
-                ri_binary=results['ri']['bin'], source_code_binary=results['source_code']['bin'],
-                database_binary=results['database']['bin'], readme_binary=results['readme']['bin'],
-                srs_text=results['srs'].get('text'), sdd_text=results['sdd'].get('text'),
-                spmp_text=results['spmp'].get('text'), std_text=results['std'].get('text'),
-                ri_text=results['ri'].get('text'), readme_text=results['readme'].get('text'),
+                srs_local_path=results['srs']['path'] if status == 'archived' else None,
+                sdd_local_path=results['sdd']['path'] if status == 'archived' else None,
+                spmp_local_path=results['spmp']['path'] if status == 'archived' else None,
+                std_local_path=results['std']['path'] if status == 'archived' else None,
+                ri_local_path=results['ri']['path'] if status == 'archived' else None,
+                source_code_local_path=results['source_code']['path'] if status == 'archived' else None,
+                database_local_path=results['database']['path'] if status == 'archived' else None,
+                readme_local_path=results['readme']['path'] if status == 'archived' else None,
+                srs_hash=results['srs']['hash'] if status == 'archived' else None,
+                sdd_hash=results['sdd']['hash'] if status == 'archived' else None,
+                spmp_hash=results['spmp']['hash'] if status == 'archived' else None,
+                std_hash=results['std']['hash'] if status == 'archived' else None,
+                ri_hash=results['ri']['hash'] if status == 'archived' else None,
+                source_code_hash=results['source_code']['hash'] if status == 'archived' else None,
+                database_hash=results['database']['hash'] if status == 'archived' else None,
+                readme_hash=results['readme']['hash'] if status == 'archived' else None,
+                srs_binary=results['srs']['bin'] if status == 'archived' else None,
+                sdd_binary=results['sdd']['bin'] if status == 'archived' else None,
+                spmp_binary=results['spmp']['bin'] if status == 'archived' else None,
+                std_binary=results['std']['bin'] if status == 'archived' else None,
+                ri_binary=results['ri']['bin'] if status == 'archived' else None,
+                source_code_binary=results['source_code']['bin'] if status == 'archived' else None,
+                database_binary=results['database']['bin'] if status == 'archived' else None,
+                readme_binary=results['readme']['bin'] if status == 'archived' else None,
+                srs_text=results['srs'].get('text') if status == 'archived' else None,
+                sdd_text=results['sdd'].get('text') if status == 'archived' else None,
+                spmp_text=results['spmp'].get('text') if status == 'archived' else None,
+                std_text=results['std'].get('text') if status == 'archived' else None,
+                ri_text=results['ri'].get('text') if status == 'archived' else None,
+                readme_text=results['readme'].get('text') if status == 'archived' else None,
                 status=status, version=current_version, batch_id=batch_id,
                 error_message=error_msg.strip(), archived_at=datetime.datetime.utcnow()
             )
