@@ -179,10 +179,20 @@ class ArchivalEngine:
                         return self._public_download_fallback(file_id, destination_path)
                     raise e
 
-            # --- VALIDATION ---
+            # --- VALIDATION: Strict PDF Integrity ---
             data = final_fh.getvalue()
             if not data: raise Exception("Downloaded file is empty")
             
+            # If we are saving as a PDF, it MUST be a valid PDF binary
+            if destination_path.lower().endswith('.pdf'):
+                if not data.startswith(b'%PDF-'):
+                    # If it's small, it's probably an HTML error message from Google
+                    snippet = data[:50].decode('utf-8', errors='ignore')
+                    logger.error(f"CORRUPTION DETECTED: Not a valid PDF. Content starts with: {snippet}")
+                    if "<html" in snippet.lower() or "google" in snippet.lower():
+                         raise Exception("Google blocked the PDF conversion. Link might be restricted or too large.")
+                    raise Exception("Downloaded file is corrupted or not a valid PDF.")
+
             with open(destination_path, 'wb') as f:
                 f.write(data)
             
