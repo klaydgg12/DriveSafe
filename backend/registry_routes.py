@@ -328,10 +328,12 @@ def archive_selected():
     sheet_id = request.json.get('sheet_id') or request.args.get('sheet_id') or os.getenv('SHEET_ID')
     
     try:
-        sheets_service, _ = get_services(requested_sheet_id=sheet_id, provided_user_creds=user_creds)
+        # Use force_user=True to ensure we use the teacher's identity for archival
+        sheets_service, _ = get_services(requested_sheet_id=sheet_id, provided_user_creds=user_creds, force_user=True)
         workbook_name = sheets_service.get_workbook_name()
-    except:
-        workbook_name = "Archives"
+    except Exception as e:
+        logger.error(f"Archival Init Error: {e}")
+        return jsonify({"error": str(e)}), 401
 
     app_obj = current_app._get_current_object()
     
@@ -356,7 +358,8 @@ def archive_selected():
                     try:
                         import time, random
                         time.sleep(random.uniform(0.1, 2.0))
-                        _, engine = get_services(requested_sheet_id=sid, provided_user_creds=creds)
+                        # Use force_user=True in the background thread too
+                        _, engine = get_services(requested_sheet_id=sid, provided_user_creds=creds, force_user=True)
                         result = engine.archive_project(p, workbook_name=wb_name, batch_id=batch_id, archived_by=archived_by_email)
                         status = result['status'].capitalize()
                         if result['status'] == 'unchanged': status = 'Archived'

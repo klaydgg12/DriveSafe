@@ -6,6 +6,7 @@ import datetime
 import logging
 import pdfplumber
 import time
+import requests
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from oauth2client.service_account import ServiceAccountCredentials
@@ -28,7 +29,9 @@ class ArchivalEngine:
         ]
         
         self.identity_label = "ROBOT (Service Account)"
+        self.creds = None
         if user_credentials:
+            self.creds = user_credentials
             self.service = build('drive', 'v3', credentials=user_credentials, cache_discovery=False)
             self.identity_label = "TEACHER (User OAuth)"
         elif service_account_json_path:
@@ -104,6 +107,41 @@ class ArchivalEngine:
             logger.error(f"Text extraction failed: {e}")
             return ""
 
+    def check_for_duplicates(self, new_file_hash, new_text, current_project_id=None):
+        """AI Plagiarism Check (Across different projects only)"""
+        if not new_text or len(new_text) < 100: return None, 0, None, None, None
+        
+        query = ArchivalLedger.query.filter(
+            ArchivalLedger.status == 'archived',
+            ArchivalLedger.project_id != current_project_id
+        ).all()
+
+        if not query: return None, 0, None, None, None
+
+        corpus = [new_text]
+        metadata_map = [] 
+        for record in query:
+            for dt in ['srs', 'sdd', 'spmp', 'std', 'ri']:
+                past_text = getattr(record, f"{dt}_text")
+                if past_text and len(past_text) > 100:
+                    corpus.append(past_text)
+                    metadata_map.append({'title': record.project_title, 'id': record.project_id})
+
+        if len(corpus) <= 1: return None, 0, None, None, None
+
+        try:
+            vectorizer = TfidfVectorizer()
+            tfidf_matrix = vectorizer.fit_transform(corpus)
+            cosine_similarities = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:]).flatten()
+            max_sim_idx = cosine_similarities.argmax()
+            max_sim_score = cosine_similarities[max_sim_idx]
+            
+            if max_sim_score > 0.999:
+                match_meta = metadata_map[max_sim_idx]
+                return "Semantic Duplicate", max_sim_score, match_meta['title'], match_meta['id'], 0
+        except: pass
+        return None, 0, None, None, None
+
     def download_file(self, file_id, destination_path):
         try:
             # 1. Get metadata to determine type
@@ -118,17 +156,38 @@ class ArchivalEngine:
             # CASE A: Native Google Doc/Sheet
             if 'google-apps.document' in mime_type or 'google-apps.spreadsheet' in mime_type:
                 try:
+                    # ATTEMPT 1: Official API Export
                     request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
                     downloader = MediaIoBaseDownload(final_fh, request)
                     done = False
                     while not done:
                         _, done = downloader.next_chunk()
                 except Exception as e:
-                    if "exportSizeLimitExceeded" in str(e):
-                        raise Exception("File too large for Google to convert. Please upload as a PDF directly.")
-                    raise e
+                    if "exportSizeLimitExceeded" in str(e) or "403" in str(e):
+                        # ATTEMPT 2: Browser-Mirror HTTP Export (Bypasses API limits)
+                        logger.info(f"[{self.identity_label}] API Limit/Error. Attempting Browser-Mirror Export...")
+                        
+                        # Get valid token from credentials
+                        if hasattr(self.creds, 'token'):
+                             token = self.creds.token
+                        else:
+                             # Refresh token if using Service Account
+                             self.creds.refresh(requests.Session())
+                             token = self.creds.token
 
-            # CASE B: MS Office (.docx, .xlsx, .pptx) or Markdown (.md) - High-Fidelity Conversion
+                        export_url = f"https://docs.google.com/document/d/{file_id}/export?format=pdf"
+                        if 'spreadsheet' in mime_type:
+                            export_url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=pdf"
+                        
+                        resp = requests.get(export_url, headers={'Authorization': f'Bearer {token}'}, timeout=60)
+                        if resp.status_code == 200:
+                            final_fh.write(resp.content)
+                        else:
+                             raise Exception("File too large for Google to convert. Please upload as a PDF directly.")
+                    else:
+                        raise e
+
+            # CASE B: MS Office or Markdown - High-Fidelity Conversion
             elif 'officedocument' in mime_type or file_name.lower().endswith('.md') or 'markdown' in mime_type:
                 logger.info(f"Performing High-Fidelity PDF conversion for {file_name}...")
                 
