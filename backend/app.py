@@ -78,57 +78,49 @@ app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=7)
 db.init_app(app)
 
 with app.app_context():
-    from sqlalchemy import inspect, text
+    from sqlalchemy import text
     try:
-        # --- ROBUST AUTO-MIGRATION ---
-        inspector = inspect(db.engine)
-        existing_columns = [col['name'] for col in inspector.get_columns('archival_ledger')]
-        
-        columns_to_add = [
-            # Metadata
-            ('batch_id', 'VARCHAR(50) AFTER version'),
-            ('archived_by', 'VARCHAR(120) AFTER batch_id'),
-            ('drive_modified_time', 'VARCHAR(100) AFTER archived_by'),
-            
-            # Original URLs
-            ('source_code_original_url', 'VARCHAR(500) AFTER ri_original_url'),
-            ('github_original_url', 'VARCHAR(500) AFTER source_code_original_url'),
-            ('database_original_url', 'VARCHAR(500) AFTER github_original_url'),
-            ('readme_original_url', 'VARCHAR(500) AFTER database_original_url'),
-            
-            # Local Paths
-            ('source_code_local_path', 'VARCHAR(500) AFTER ri_local_path'),
-            ('database_local_path', 'VARCHAR(500) AFTER source_code_local_path'),
-            ('readme_local_path', 'VARCHAR(500) AFTER database_local_path'),
-            
-            # Hashes
-            ('source_code_hash', 'VARCHAR(64) AFTER ri_hash'),
-            ('database_hash', 'VARCHAR(64) AFTER source_code_hash'),
-            ('readme_hash', 'VARCHAR(64) AFTER database_hash'),
-            
-            # Binary Data (LargeBinary / LONGBLOB)
-            ('source_code_binary', 'LONGBLOB AFTER ri_binary'),
-            ('database_binary', 'LONGBLOB AFTER source_code_binary'),
-            ('readme_binary', 'LONGBLOB AFTER database_binary'),
-            
-            # Text Content
-            ('readme_text', 'TEXT AFTER ri_text')
+        # --- ATOMIC AUTO-REPAIR (The Nuclear Option) ---
+        # We use raw SQL to avoid SQLAlchemy's internal "Unknown Column" crashes
+        required = [
+            ('batch_id', 'VARCHAR(50)'),
+            ('archived_by', 'VARCHAR(120)'),
+            ('drive_modified_time', 'VARCHAR(100)'),
+            ('source_code_original_url', 'VARCHAR(500)'),
+            ('github_original_url', 'VARCHAR(500)'),
+            ('database_original_url', 'VARCHAR(500)'),
+            ('readme_original_url', 'VARCHAR(500)'),
+            ('source_code_local_path', 'VARCHAR(500)'),
+            ('database_local_path', 'VARCHAR(500)'),
+            ('readme_local_path', 'VARCHAR(500)'),
+            ('source_code_hash', 'VARCHAR(64)'),
+            ('database_hash', 'VARCHAR(64)'),
+            ('readme_hash', 'VARCHAR(64)'),
+            ('source_code_binary', 'LONGBLOB'),
+            ('database_binary', 'LONGBLOB'),
+            ('readme_binary', 'LONGBLOB'),
+            ('readme_text', 'TEXT')
         ]
         
-        for col_name, col_type in columns_to_add:
-            if col_name not in existing_columns:
+        # 1. Get current columns using raw SQL
+        result = db.session.execute(text("SHOW COLUMNS FROM archival_ledger"))
+        existing = [row[0] for row in result.fetchall()]
+        
+        # 2. Force add missing columns
+        for col_name, col_type in required:
+            if col_name not in existing:
+                logger.info(f"FORCE REPAIR: Adding {col_name}...")
                 try:
-                    logger.info(f"Auto-Migration: Adding missing column '{col_name}'...")
                     db.session.execute(text(f"ALTER TABLE archival_ledger ADD COLUMN {col_name} {col_type}"))
                     db.session.commit()
-                except Exception as col_err:
+                except Exception as e:
                     db.session.rollback()
-                    logger.warning(f"Could not add column {col_name}: {col_err}")
+                    logger.warning(f"Repair failed for {col_name}: {e}")
 
-        logger.info("Auto-Migration: Database schema synchronization check complete.")
+        logger.info("DATABASE REPAIR: Success. All columns synchronized.")
     except Exception as e:
         db.session.rollback()
-        logger.warning(f"Auto-Migration system encountered an error: {e}")
+        logger.error(f"Critical Repair System Error: {e}")
 
 login_manager = LoginManager(app)
 CORS(app, supports_credentials=True)

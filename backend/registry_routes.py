@@ -413,7 +413,6 @@ def archive_selected():
     thread = threading.Thread(target=process_task, args=(app_obj, projects, user_creds, sheet_id, workbook_name, user_email))
     thread.start()
     return jsonify({"message": f"Started archival for {len(projects)} projects."}), 202
-    return jsonify({"message": f"Started archival for {len(projects)} projects."}), 202
 
 @registry_bp.route('/reset', methods=['POST'])
 @login_required
