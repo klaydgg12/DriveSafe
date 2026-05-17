@@ -246,8 +246,9 @@ def get_grouped_ledger():
                 path = getattr(r, f"{doc_type}_local_path")
                 current_hash = getattr(r, f"{doc_type}_hash")
                 
-                # ONLY count as a revision if the file actually exists in the vault
-                if path and str(path).strip():
+                # STRICT VERSIONING: Only count if status is 'archived' AND path is valid
+                # This prevents 'failed' attempts from appearing as ghost revisions
+                if r.status == 'archived' and path and str(path).strip():
                     doc_versions[project_key][doc_type] += 1
                     target["documents"][doc_type].append({
                         "id": int(r.id),
