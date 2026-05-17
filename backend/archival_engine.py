@@ -361,12 +361,14 @@ class ArchivalEngine:
             except Exception as e:
                 logger.error(f"Error processing {doc_type}: {e}")
                 err_str = str(e)
+                id_tag = f"[{self.identity_label.split(' ')[0]}]" # [TEACHER] or [ROBOT]
+                
                 if "File too large" in err_str:
-                    error_msg += f"{doc_type.upper()}: {err_str}; "
+                    error_msg += f"{id_tag} {doc_type.upper()}: File is too massive for Google's converter. Student must upload as a PDF; "
                 elif "403" in err_str or "permission" in err_str.lower():
-                    error_msg += f"{doc_type.upper()}: Permission Denied; "
+                    error_msg += f"{id_tag} {doc_type.upper()}: Access Denied. Student must change link to 'Anyone with link can view'; "
                 else:
-                    error_msg += f"{doc_type.upper()} System Error; "
+                    error_msg += f"{id_tag} {doc_type.upper()}: {err_str[:50]}; "
 
         if total_changed == 0 and last_record:
             return {'status': 'unchanged', 'message': 'No edits found.', 'version': last_record.version}
