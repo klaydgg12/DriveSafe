@@ -14,6 +14,14 @@ from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from models import db, ArchivalLedger
 
+# Conditional AI import to save RAM when not needed
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+    AI_AVAILABLE = True
+except ImportError:
+    AI_AVAILABLE = False
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -49,7 +57,7 @@ class ArchivalEngine:
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v17 Initialized (Hyper-Sensitive DNA)")
+        logger.info(f"ArchivalEngine Master v18 Initialized (AI-Guard Enabled: {AI_AVAILABLE})")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -90,12 +98,10 @@ class ArchivalEngine:
             return None, None
 
     def _extract_text_from_pdf(self, file_path):
-        """High-depth text extraction to ensure every edit is detected"""
         try:
             text = ""
             with pdfplumber.open(file_path) as pdf:
-                # Scan up to 100 pages for maximum sensitivity
-                for page in pdf.pages[:100]: 
+                for page in pdf.pages[:50]: # Scan first 50 pages for balance
                     text += (page.extract_text() or "")
             return text
         except: return ""
@@ -216,6 +222,7 @@ class ArchivalEngine:
             link = project_data.get(f'{doc_type}_link')
             results[doc_type]['url'] = link
             
+            # --- GAP-FILLING PERSISTENCE ---
             if not link and last_record:
                 old_path = getattr(last_record, f"{doc_type}_local_path")
                 if old_path:
@@ -240,10 +247,9 @@ class ArchivalEngine:
                 results[doc_type]['ts'] = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
                 is_google_doc = doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'readme']
                 
-                # --- HYPER-SENSITIVITY: BYPASS SKIP FOR GOOGLE DOCS ---
-                # We always download Google Docs to check DNA, because timestamps lag.
                 is_modified = True
                 if last_record and not is_google_doc:
+                    # Layer 0/1: MD5 and Time check (only for binaries)
                     vault_hash = getattr(last_record, f"{doc_type}_hash")
                     if drive_md5 and vault_hash and drive_md5 == vault_hash:
                         is_modified = False
@@ -274,22 +280,37 @@ class ArchivalEngine:
                         old_hash = getattr(last_record, f"{doc_type}_hash")
                         old_text = getattr(last_record, f"{doc_type}_text")
                         
-                        # --- THE DNA GATEKEEPER ---
-                        if is_google_doc:
-                            # If text matches 100%, skip versioning even if metadata changed.
-                            if new_text and old_text and new_text == old_text:
-                                logger.info(f"   [DNA MATCH] {doc_type.upper()} text is identical. Skipping v2.")
-                                results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                                results[doc_type]['hash'] = old_hash
-                                results[doc_type]['text'] = old_text
-                                if os.path.exists(temp_path): os.remove(temp_path)
-                                continue
-                        else:
-                            if new_hash == old_hash:
-                                results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                                results[doc_type]['hash'] = old_hash
-                                if os.path.exists(temp_path): os.remove(temp_path)
-                                continue
+                        # --- THE AI-GUARD GATEKEEPER ---
+                        if is_google_doc and AI_AVAILABLE and new_text and old_text:
+                            # Using Cosine Similarity to detect real changes vs metadata noise
+                            try:
+                                vect = TfidfVectorizer(min_df=1)
+                                tfidf = vect.fit_transform([old_text, new_text])
+                                sim_score = (tfidf * tfidf.T).toarray()[0,1]
+                                
+                                # Threshold: 99.5% similarity = Unchanged content
+                                if sim_score > 0.995:
+                                    logger.info(f"   [AI GUARD] {doc_type.upper()} is {sim_score:.2%} identical. Skipping v2.")
+                                    results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                                    results[doc_type]['hash'] = old_hash
+                                    results[doc_type]['text'] = old_text
+                                    if os.path.exists(temp_path): os.remove(temp_path)
+                                    continue
+                            except Exception as ai_e:
+                                logger.warning(f"AI comparison failed, falling back to strict: {ai_e}")
+
+                        # Strict fallback if AI is disabled or fails
+                        if is_google_doc and new_text and old_text and new_text == old_text:
+                            results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                            results[doc_type]['hash'] = old_hash
+                            results[doc_type]['text'] = old_text
+                            if os.path.exists(temp_path): os.remove(temp_path)
+                            continue
+                        elif not is_google_doc and new_hash == old_hash:
+                            results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                            results[doc_type]['hash'] = old_hash
+                            if os.path.exists(temp_path): os.remove(temp_path)
+                            continue
 
                     results[doc_type]['bin'] = final_bytes
                     results[doc_type]['hash'] = new_hash
