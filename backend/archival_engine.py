@@ -49,15 +49,13 @@ class ArchivalEngine:
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v7 Initialized ({self.identity_label})")
+        logger.info(f"ArchivalEngine Master v8 Initialized (Strict Deduplication Mode)")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
         s = str(url_or_id).replace('\\', '')
-        # Folder pattern
         match_folder = re.search(r'folders/([a-zA-Z0-9_-]{25,})', s)
         if match_folder: return match_folder.group(1), True
-        # File pattern
         match_file = re.search(r'/d/([a-zA-Z0-9_-]{25,})', s)
         if match_file: return match_file.group(1), False
         match_id = re.search(r'id=([a-zA-Z0-9_-]{25,})', s)
@@ -107,7 +105,6 @@ class ArchivalEngine:
         return True
 
     def _construct_export_url(self, file_id, original_url=None, is_google_doc=True):
-        """Clean URL builder that handles institutional keys like OUID"""
         if not is_google_doc:
             return f"https://drive.google.com/uc?export=download&id={file_id}"
         base = f"https://docs.google.com/document/d/{file_id}/export"
@@ -131,7 +128,7 @@ class ArchivalEngine:
             
             logger.info(f"[{self.identity_label}] ARCHIVING: {file_name}")
 
-            # --- ATTEMPT 1: HIGH-FIDELITY BROWSER MIRROR (Bypasses School Walls) ---
+            # --- ATTEMPT 1: HIGH-FIDELITY BROWSER MIRROR ---
             final_data = None
             try:
                 url = self._construct_export_url(file_id, original_url, is_google_doc=is_google)
@@ -150,7 +147,7 @@ class ArchivalEngine:
                     final_data = resp.content
             except Exception as e: logger.warning(f"Mirror failed: {e}")
 
-            # --- ATTEMPT 2: OFFICIAL API (Safe Fallback) ---
+            # --- ATTEMPT 2: OFFICIAL API ---
             if not final_data:
                 try:
                     fh = io.BytesIO()
@@ -175,13 +172,15 @@ class ArchivalEngine:
                     temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id').execute()
                     t_id = temp_file.get('id')
                     try:
-                        time.sleep(10) # 10s breathe for high-quality conversion
+                        time.sleep(5) # Standard conversion delay
                         req = self.service.files().export_media(fileId=t_id, mimeType='application/pdf')
                         fh = io.BytesIO()
                         dld = MediaIoBaseDownload(fh, req)
                         d_done = False
                         while not d_done: _, d_done = dld.next_chunk()
-                        final_data = fh.getvalue()
+                        data = fh.getvalue()
+                        if data.startswith(b'%PDF-'):
+                            final_data = data
                     finally:
                         try: self.service.files().delete(fileId=t_id).execute()
                         except: pass
@@ -201,12 +200,17 @@ class ArchivalEngine:
         clean_title = str(project_title).replace(' ', '_').replace('/', '_').replace('\\', '_')
         academic_year = project_data.get('academic_year')
         
-        base_project_dir = os.path.join(self.archive_root, workbook_name, academic_year, batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}")
+        # hierarchy: Workbook / Sheet / Transaction / Project
+        base_project_dir = os.path.join(
+            self.archive_root, workbook_name, academic_year, 
+            batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}"
+        )
         os.makedirs(base_project_dir, exist_ok=True)
         
+        # --- ABSOLUTE LATEST RECORD (Targeting global history for this project) ---
         last_record = ArchivalLedger.query.filter_by(
-            project_id=project_id, academic_year=academic_year, workbook_name=workbook_name
-        ).order_by(ArchivalLedger.id.desc()).first()
+            project_id=project_id, academic_year=academic_year
+        ).order_by(ArchivalLedger.version.desc()).first()
         
         doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'presentation', 'source_code', 'database', 'readme']
         results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': b'', 'ts': None, 'text': ''} for dt in doc_types}
@@ -222,7 +226,7 @@ class ArchivalEngine:
             if is_folder:
                 file_id, _ = self._resolve_folder(raw_id, target_hint=doc_type.upper())
                 if not file_id:
-                    error_msg += f"{doc_type.upper()}: Folder empty; "
+                    error_msg += f"{doc_type.upper()}: Empty folder; "
                     continue
 
             try:
@@ -230,16 +234,21 @@ class ArchivalEngine:
                 current_drive_ts = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
                 results[doc_type]['ts'] = current_drive_ts
 
+                # --- LAYER 1: FAST TIMESTAMP DEDUPLICATION ---
                 is_modified = True
                 if last_record and last_record.archived_at and current_drive_ts != 'Unknown':
                     try:
                         drive_dt = datetime.datetime.fromisoformat(current_drive_ts.replace('Z', '+00:00'))
+                        # Database stores naive UTC.
                         vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
+                        # Only proceed if Drive is at least 60s newer
                         if (drive_dt - vault_dt).total_seconds() < 60:
                             l_path = getattr(last_record, f"{doc_type}_local_path")
                             if l_path and os.path.exists(os.path.join(self.archive_root, l_path)):
                                 with open(os.path.join(self.archive_root, l_path), 'rb') as f:
-                                    if f.read(5) == b'%PDF-': is_modified = False
+                                    if f.read(5) == b'%PDF-': 
+                                        is_modified = False
+                                        logger.info(f"DEDUPLICATED (TS): {doc_type.upper()} is up-to-date.")
                     except: pass
 
                 if not is_modified:
@@ -253,32 +262,38 @@ class ArchivalEngine:
                 temp_path = os.path.join(doc_dir, f"TEMP_{doc_type.upper()}.pdf")
 
                 final_bytes = self.download_file(file_id, temp_path, original_url=link)
-                results[doc_type]['bin'] = final_bytes
                 new_hash = hashlib.sha256(final_bytes).hexdigest()
                 
+                # --- LAYER 2: ABSOLUTE BYTE-HASH DEDUPLICATION ---
                 if last_record:
                     if new_hash == getattr(last_record, f"{doc_type}_hash"):
+                        logger.info(f"DEDUPLICATED (BYTE): {doc_type.upper()} content is identical.")
                         results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                         results[doc_type]['hash'] = new_hash
                         results[doc_type]['bin'] = b''
                         if os.path.exists(temp_path): os.remove(temp_path)
                         continue
 
+                results[doc_type]['bin'] = final_bytes
                 results[doc_type]['hash'] = new_hash
                 total_changed += 1
                 results[doc_type]['is_changed'] = True
-                prev_doc_v = db.session.query(db.func.count(ArchivalLedger.id)).filter(ArchivalLedger.project_id == project_id, getattr(ArchivalLedger, f"{doc_type}_hash").isnot(None)).scalar() or 0
-                final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{prev_doc_v+1}.pdf")
+                
+                # Accurate doc version based on history
+                current_rev = last_record.version if last_record else 0
+                final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{current_rev+1}.pdf")
                 os.rename(temp_path, final_path)
                 results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
             except Exception as e:
                 error_msg += f"{doc_type.upper()}: {str(e)[:30]}; "
 
+        # --- THE "SUCCESS-ONLY" GATEKEEPER ---
         if total_changed == 0:
             if last_record: return {'status': 'unchanged', 'version': last_record.version}
             else: return {'status': 'failed', 'error': error_msg.strip()}
 
         status = "partial" if error_msg else "archived"
+        # Versioning: increment the highest version found in history
         current_version = (last_record.version if last_record else 0) + 1
 
         MAX_BIN_SIZE = 15 * 1024 * 1024 
