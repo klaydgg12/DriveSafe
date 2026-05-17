@@ -221,36 +221,40 @@ def get_grouped_ledger():
         doc_versions = defaultdict(lambda: defaultdict(int))
         grouped_data = {}
         for r in records:
-            # Consistent project key using normalized Team ID and Title
+            # UNIFY BY PROJECT ID ONLY (The Team Code)
+            # This ensures that even if titles or sheets change, the team stays unified.
             pid_safe = str(r.project_id).strip().lower()
-            project_key = f"{pid_safe}_{r.project_title.strip().lower()}"
             
-            if project_key not in grouped_data:
-                grouped_data[project_key] = {
+            if pid_safe not in grouped_data:
+                grouped_data[pid_safe] = {
                     "project_id": r.project_id, 
-                    "project_title": r.project_title,
-                    "academic_year": r.academic_year, 
+                    "project_title": r.project_title, # Will be updated to latest
+                    "academic_year": r.academic_year, # Will be updated to latest
                     "workbook_name": r.workbook_name,
-                    "db_ids": [], # Track ALL database IDs for deletion
+                    "db_ids": [],
                     "documents": { 
                         "srs": [], "sdd": [], "spmp": [], "std": [], "ri": [],
                         "source_code": [], "database": [], "readme": [] 
                     }
                 }
-            target = grouped_data[project_key]
-            # Always add the record ID to the master list for deletion
+            
+            target = grouped_data[pid_safe]
+            # ALWAYS update to the latest title and sheet info found
+            target["project_title"] = r.project_title
+            target["academic_year"] = r.academic_year
+            target["workbook_name"] = r.workbook_name
             target["db_ids"].append(int(r.id))
 
             for doc_type in ["srs", "sdd", "spmp", "std", "ri", "source_code", "database", "readme"]:
                 path = getattr(r, f"{doc_type}_local_path")
                 current_hash = getattr(r, f"{doc_type}_hash")
                 
-                # Include the version if it was archived OR if it was a failed attempt for this project
+                # Include as a version if it has a path OR it was a failed archival attempt
                 if path or r.status == 'failed':
-                    doc_versions[project_key][doc_type] += 1
+                    doc_versions[pid_safe][doc_type] += 1
                     target["documents"][doc_type].append({
-                        "id": int(r.id), # Ensure integer for frontend
-                        "version": doc_versions[project_key][doc_type],
+                        "id": int(r.id),
+                        "version": doc_versions[pid_safe][doc_type],
                         "hash": current_hash, 
                         "timestamp": r.archived_at.isoformat() + 'Z' if r.archived_at else None,
                         "status": r.status

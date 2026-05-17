@@ -244,39 +244,39 @@ class ArchivalEngine:
         current_version = (last_record.version if last_record else 0) + 1
         status = "archived" if not error_msg else "failed"
 
-        # ALWAYS save the record if we made it here, to ensure the version increments
-        if status == "archived":
-            try:
-                ledger_entry = ArchivalLedger(
-                    project_id=project_id, project_title=project_data.get('project_title'),
-                    academic_year=academic_year, workbook_name=workbook_name,
-                    srs_original_url=project_data.get('srs_link'), sdd_original_url=project_data.get('sdd_link'),
-                    spmp_original_url=project_data.get('spmp_link'), std_original_url=project_data.get('std_link'),
-                    ri_original_url=project_data.get('ri_link'), source_code_original_url=project_data.get('source_code_link'),
-                    github_original_url=project_data.get('github_link'), database_original_url=project_data.get('database_link'),
-                    readme_original_url=project_data.get('readme_link'),
-                    srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
-                    spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
-                    ri_local_path=results['ri']['path'], source_code_local_path=results['source_code']['path'],
-                    database_local_path=results['database']['path'], readme_local_path=results['readme']['path'],
-                    srs_hash=results['srs']['hash'], sdd_hash=results['sdd']['hash'],
-                    spmp_hash=results['spmp']['hash'], std_hash=results['std']['hash'],
-                    ri_hash=results['ri']['hash'], source_code_hash=results['source_code']['hash'],
-                    database_hash=results['database']['hash'], readme_hash=results['readme']['hash'],
-                    srs_binary=results['srs']['bin'], sdd_binary=results['sdd']['bin'],
-                    spmp_binary=results['spmp']['bin'], std_binary=results['std']['bin'],
-                    ri_binary=results['ri']['bin'], source_code_binary=results['source_code']['bin'],
-                    database_binary=results['database']['bin'], readme_binary=results['readme']['bin'],
-                    srs_text=results['srs'].get('text'), sdd_text=results['sdd'].get('text'),
-                    spmp_text=results['spmp'].get('text'), std_text=results['std'].get('text'),
-                    ri_text=results['ri'].get('text'), readme_text=results['readme'].get('text'),
-                    status=status, version=current_version, batch_id=batch_id,
-                    error_message=error_msg.strip(), archived_at=datetime.datetime.utcnow()
-                )
-                db.session.add(ledger_entry)
-                db.session.commit()
-            except Exception as save_err:
-                logger.error(f"CRITICAL DATABASE ERROR: {save_err}")
-                return {'status': 'failed', 'version': current_version, 'error': f"Database save failed. Schema mismatch."}
+        # ALWAYS save the record so the dashboard and ledger can track the attempt
+        try:
+            ledger_entry = ArchivalLedger(
+                project_id=project_id, project_title=project_data.get('project_title'),
+                academic_year=academic_year, workbook_name=workbook_name,
+                srs_original_url=project_data.get('srs_link'), sdd_original_url=project_data.get('sdd_link'),
+                spmp_original_url=project_data.get('spmp_link'), std_original_url=project_data.get('std_link'),
+                ri_original_url=project_data.get('ri_link'), source_code_original_url=project_data.get('source_code_link'),
+                github_original_url=project_data.get('github_link'), database_original_url=project_data.get('database_link'),
+                readme_original_url=project_data.get('readme_link'),
+                srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
+                spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
+                ri_local_path=results['ri']['path'], source_code_local_path=results['source_code']['path'],
+                database_local_path=results['database']['path'], readme_local_path=results['readme']['path'],
+                srs_hash=results['srs']['hash'], sdd_hash=results['sdd']['hash'],
+                spmp_hash=results['spmp']['hash'], std_hash=results['std']['hash'],
+                ri_hash=results['ri']['hash'], source_code_hash=results['source_code']['hash'],
+                database_hash=results['database']['hash'], readme_hash=results['readme']['hash'],
+                srs_binary=results['srs']['bin'], sdd_binary=results['sdd']['bin'],
+                spmp_binary=results['spmp']['bin'], std_binary=results['std']['bin'],
+                ri_binary=results['ri']['bin'], source_code_binary=results['source_code']['bin'],
+                database_binary=results['database']['bin'], readme_binary=results['readme']['bin'],
+                srs_text=results['srs'].get('text'), sdd_text=results['sdd'].get('text'),
+                spmp_text=results['spmp'].get('text'), std_text=results['std'].get('text'),
+                ri_text=results['ri'].get('text'), readme_text=results['readme'].get('text'),
+                status=status, version=current_version, batch_id=batch_id,
+                error_message=error_msg.strip(), archived_at=datetime.datetime.utcnow()
+            )
+            db.session.add(ledger_entry)
+            db.session.commit()
+        except Exception as save_err:
+            logger.error(f"CRITICAL DATABASE ERROR: {save_err}")
+            db.session.rollback()
+            return {'status': 'failed', 'version': current_version, 'error': f"Database save failed. Schema mismatch or database error."}
         
         return {'status': status, 'version': current_version, 'paths': {dt: results[dt]['path'] for dt in doc_types}, 'error': error_msg.strip()}
