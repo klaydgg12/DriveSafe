@@ -144,19 +144,25 @@ class ArchivalEngine:
 
     def download_file(self, file_id, destination_path):
         try:
-            # 1. Get metadata to determine type
-            file_metadata = self.service.files().get(fileId=file_id, fields='mimeType, name').execute()
-            mime_type = file_metadata.get('mimeType', '')
-            file_name = file_metadata.get('name', 'unknown')
-            
-            logger.info(f"[{self.identity_label}] Downloading: {file_name} ({mime_type})")
+            # 1. ATTEMPT WITH TEACHER IDENTITY (API)
+            try:
+                file_metadata = self.service.files().get(fileId=file_id, fields='mimeType, name').execute()
+                mime_type = file_metadata.get('mimeType', '')
+                file_name = file_metadata.get('name', 'unknown')
+            except Exception as api_meta_err:
+                # If API fails with 403, it might be an organizational restriction on the API. 
+                # Try to guess mime from extension if possible, or assume PDF for fallback
+                if "403" in str(api_meta_err):
+                    logger.info(f"[{self.identity_label}] Metadata 403. Switching to Public Fallback...")
+                    return self._public_download_fallback(file_id, destination_path)
+                raise api_meta_err
 
+            logger.info(f"[{self.identity_label}] Downloading: {file_name} ({mime_type})")
             final_fh = io.BytesIO()
             
             # CASE A: Native Google Doc/Sheet
             if 'google-apps.document' in mime_type or 'google-apps.spreadsheet' in mime_type:
                 try:
-                    # ATTEMPT 1: Official API Export
                     request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
                     downloader = MediaIoBaseDownload(final_fh, request)
                     done = False
@@ -164,87 +170,62 @@ class ArchivalEngine:
                         _, done = downloader.next_chunk()
                 except Exception as e:
                     if "exportSizeLimitExceeded" in str(e) or "403" in str(e):
-                        # ATTEMPT 2: Browser-Mirror HTTP Export (Bypasses API limits)
-                        logger.info(f"[{self.identity_label}] API Limit/Error. Attempting Browser-Mirror Export...")
-                        
-                        # Get valid token from credentials
-                        if hasattr(self.creds, 'token'):
-                             token = self.creds.token
-                        else:
-                             # Refresh token if using Service Account
-                             self.creds.refresh(requests.Session())
-                             token = self.creds.token
-
-                        export_url = f"https://docs.google.com/document/d/{file_id}/export?format=pdf"
-                        if 'spreadsheet' in mime_type:
-                            export_url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=pdf"
-                        
-                        resp = requests.get(export_url, headers={'Authorization': f'Bearer {token}'}, timeout=60)
-                        if resp.status_code == 200:
-                            final_fh.write(resp.content)
-                        else:
-                             raise Exception("File too large for Google to convert. Please upload as a PDF directly.")
-                    else:
-                        raise e
-
-            # CASE B: MS Office or Markdown - High-Fidelity Conversion
-            elif 'officedocument' in mime_type or file_name.lower().endswith('.md') or 'markdown' in mime_type:
-                logger.info(f"Performing High-Fidelity PDF conversion for {file_name}...")
-                
-                # Download raw bytes first
-                raw_fh = io.BytesIO()
-                downloader = MediaIoBaseDownload(raw_fh, self.service.files().get_media(fileId=file_id))
-                done = False
-                while not done:
-                    _, done = downloader.next_chunk()
-                
-                # Determine target upload mime
-                if 'wordprocessingml.document' in mime_type: target_mime = 'application/vnd.google-apps.document'
-                elif 'spreadsheetml.sheet' in mime_type: target_mime = 'application/vnd.google-apps.spreadsheet'
-                elif 'presentationml.presentation' in mime_type: target_mime = 'application/vnd.google-apps.presentation'
-                else: target_mime = 'application/vnd.google-apps.document'
-
-                # Upload as temporary Google asset for conversion
-                temp_meta = {
-                    'name': f"DRIVESAFE_CONV_{int(time.time())}",
-                    'mimeType': target_mime
-                }
-                upload_mime = 'text/plain' if file_name.lower().endswith('.md') else mime_type
-                
-                media = MediaIoBaseUpload(io.BytesIO(raw_fh.getvalue()), mimetype=upload_mime, resumable=True)
-                temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id').execute()
-                temp_id = temp_file.get('id')
-                
+                        logger.info(f"[{self.identity_label}] Export failed. Trying Browser-Mirror HTTP Export...")
+                        return self._public_download_fallback(file_id, destination_path, is_export=True, is_sheet='spreadsheet' in mime_type)
+                    raise e
+            # CASE B: Binary File
+            else:
                 try:
-                    time.sleep(3) # Wait for Google to format
-                    request = self.service.files().export_media(fileId=temp_id, mimeType='application/pdf')
+                    request = self.service.files().get_media(fileId=file_id)
                     downloader = MediaIoBaseDownload(final_fh, request)
                     done = False
                     while not done:
                         _, done = downloader.next_chunk()
-                finally:
-                    try: self.service.files().delete(fileId=temp_id).execute()
-                    except: pass
+                except Exception as e:
+                    if "403" in str(e):
+                        return self._public_download_fallback(file_id, destination_path)
+                    raise e
 
-            # CASE C: Binary File (PDF, ZIP, SQL, Images)
-            else:
-                request = self.service.files().get_media(fileId=file_id)
-                downloader = MediaIoBaseDownload(final_fh, request)
-                done = False
-                while not done:
-                    _, done = downloader.next_chunk()
-
-            # --- VALIDATION ---
-            data = final_fh.getvalue()
-            if not data: raise Exception("Downloaded file is empty")
-            
             with open(destination_path, 'wb') as f:
-                f.write(data)
-            
+                f.write(final_fh.getvalue())
             return destination_path
         except Exception as e:
             logger.error(f"Download Error for {file_id}: {e}")
             raise e
+
+    def _public_download_fallback(self, file_id, destination_path, is_export=False, is_sheet=False):
+        """Mirror the browser's behavior for public links (No token required)"""
+        try:
+            if is_export:
+                url = f"https://docs.google.com/document/d/{file_id}/export?format=pdf"
+                if is_sheet: url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=pdf"
+            else:
+                url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            
+            # Try with Teacher Token first for better success on internal files
+            headers = {}
+            if self.creds:
+                 # Ensure token is fresh
+                 if not self.creds.valid:
+                      self.creds.refresh(requests.Session())
+                 headers = {'Authorization': f'Bearer {self.creds.token}'}
+
+            resp = requests.get(url, headers=headers, timeout=60, stream=True)
+            
+            # If 403 with token, try WITHOUT token (Publicly Shared)
+            if resp.status_code == 403:
+                 logger.info("Token restricted. Trying 100% public download...")
+                 resp = requests.get(url, timeout=60, stream=True)
+
+            if resp.status_code == 200:
+                with open(destination_path, 'wb') as f:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        if chunk: f.write(chunk)
+                return destination_path
+            else:
+                raise Exception(f"Public Download Failed (Status {resp.status_code})")
+        except Exception as e:
+            raise Exception(f"Access Denied. Ensure link is set to 'Anyone with link can view'. ({str(e)[:50]})")
 
     def _get_file_metadata(self, file_id):
         try:

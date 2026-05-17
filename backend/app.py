@@ -82,9 +82,10 @@ with app.app_context():
     try:
         # --- ROBUST ZERO-FAILURE REPAIR ---
         required = [
+            # CRITICAL: drive_modified_time MUST BE FIRST (Fixes Dashboard Select Crash)
+            ('drive_modified_time', 'VARCHAR(100)'), 
             ('batch_id', 'VARCHAR(50)'),
             ('archived_by', 'VARCHAR(120)'),
-            ('drive_modified_time', 'VARCHAR(100)'),
             ('research_paper_original_url', 'VARCHAR(500)'),
             ('usability_test_original_url', 'VARCHAR(500)'),
             ('presentation_original_url', 'VARCHAR(500)'),
