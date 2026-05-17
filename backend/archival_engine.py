@@ -14,7 +14,7 @@ from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from models import db, ArchivalLedger
 
-# Conditional AI import to save RAM when not needed
+# Conditional AI import
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
@@ -33,13 +33,11 @@ class ArchivalEngine:
             "https://www.googleapis.com/auth/drive.file",
             "https://www.googleapis.com/auth/spreadsheets"
         ]
+        self.identity_label = "TEACHER" if user_credentials else "ROBOT"
+        self.creds = user_credentials
         
-        self.identity_label = "ROBOT"
-        self.creds = None
         if user_credentials:
-            self.creds = user_credentials
             self.service = build('drive', 'v3', credentials=user_credentials, cache_discovery=False)
-            self.identity_label = "TEACHER"
         elif service_account_json_path:
             try:
                 if service_account_json_path.strip().startswith('{'):
@@ -57,7 +55,7 @@ class ArchivalEngine:
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v18 Initialized (AI-Guard Enabled: {AI_AVAILABLE})")
+        logger.info(f"ArchivalEngine Master v19 Initialized (Zero-Ghost Protocol)")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -101,7 +99,7 @@ class ArchivalEngine:
         try:
             text = ""
             with pdfplumber.open(file_path) as pdf:
-                for page in pdf.pages[:50]: # Scan first 50 pages for balance
+                for page in pdf.pages[:50]: 
                     text += (page.extract_text() or "")
             return text
         except: return ""
@@ -142,6 +140,7 @@ class ArchivalEngine:
         logger.info(f"[{self.identity_label}] DOWNLOADING: {file_name}")
         final_data = None
         
+        # 1. Stealth Mirror
         try:
             url = self._construct_url(file_id, original_url, is_google_doc=is_google)
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'}
@@ -155,6 +154,7 @@ class ArchivalEngine:
                 final_data = resp.content
         except: pass
 
+        # 2. Token Injection
         if not final_data and self.creds:
             try:
                 url = self._construct_url(file_id, original_url, is_google_doc=is_google, inject_token=self.creds.token)
@@ -163,6 +163,7 @@ class ArchivalEngine:
                     final_data = resp.content
             except: pass
 
+        # 3. API
         if not final_data:
             try:
                 fh = io.BytesIO()
@@ -174,8 +175,11 @@ class ArchivalEngine:
                 if self.validate_binary(fh.getvalue(), is_pdf=is_pdf_target): final_data = fh.getvalue()
             except: pass
 
-        if not final_data: raise Exception("Access Denied (Google Lock)")
+        if not final_data: 
+            # ENHANCED ERROR: Actionable advice for the user
+            raise Exception("Access Denied (Google Lock). FIX: Open this link in your browser and verify you can download it as PDF.")
 
+        # Word to PDF conversion
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
             if final_data.startswith(b'PK\x03\x04') or str(file_name).lower().endswith(('.docx', '.doc')):
                 temp_meta = {'name': f"CONV_{int(time.time())}", 'mimeType': 'application/vnd.google-apps.document'}
@@ -195,7 +199,7 @@ class ArchivalEngine:
                     try: self.service.files().delete(fileId=t_id).execute()
                     except: pass
 
-        if is_pdf_target and not final_data.startswith(b'%PDF-'): raise Exception("PDF Conversion Locked")
+        if is_pdf_target and not final_data.startswith(b'%PDF-'): raise Exception("PDF Conversion Locked by Google")
         with open(destination_path, 'wb') as f: f.write(final_data)
         return final_data
 
@@ -249,7 +253,7 @@ class ArchivalEngine:
                 
                 is_modified = True
                 if last_record and not is_google_doc:
-                    # Layer 0/1: MD5 and Time check (only for binaries)
+                    # Non-docs: MD5 and Time check
                     vault_hash = getattr(last_record, f"{doc_type}_hash")
                     if drive_md5 and vault_hash and drive_md5 == vault_hash:
                         is_modified = False
@@ -273,45 +277,46 @@ class ArchivalEngine:
                 try:
                     final_bytes = self.download_file(file_id, temp_path, original_url=link)
                     new_hash = hashlib.sha256(final_bytes).hexdigest()
-                    new_text = ""
-                    if is_google_doc: new_text = self._extract_text_from_pdf(temp_path)
                     
+                    # --- ZERO-GHOST PROTOCOL: GATE 1 (STRICT HASH MATCH) ---
                     if last_record:
                         old_hash = getattr(last_record, f"{doc_type}_hash")
-                        old_text = getattr(last_record, f"{doc_type}_text")
-                        
-                        # --- THE AI-GUARD GATEKEEPER ---
-                        if is_google_doc and AI_AVAILABLE and new_text and old_text:
-                            # Using Cosine Similarity to detect real changes vs metadata noise
-                            try:
-                                vect = TfidfVectorizer(min_df=1)
-                                tfidf = vect.fit_transform([old_text, new_text])
-                                sim_score = (tfidf * tfidf.T).toarray()[0,1]
-                                
-                                # Threshold: 99.5% similarity = Unchanged content
-                                if sim_score > 0.995:
-                                    logger.info(f"   [AI GUARD] {doc_type.upper()} is {sim_score:.2%} identical. Skipping v2.")
-                                    results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                                    results[doc_type]['hash'] = old_hash
-                                    results[doc_type]['text'] = old_text
-                                    if os.path.exists(temp_path): os.remove(temp_path)
-                                    continue
-                            except Exception as ai_e:
-                                logger.warning(f"AI comparison failed, falling back to strict: {ai_e}")
-
-                        # Strict fallback if AI is disabled or fails
-                        if is_google_doc and new_text and old_text and new_text == old_text:
+                        if new_hash == old_hash:
+                            logger.info(f"   [ZERO-GHOST] Hash match for {doc_type.upper()}. Skipping v2.")
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                             results[doc_type]['hash'] = old_hash
-                            results[doc_type]['text'] = old_text
-                            if os.path.exists(temp_path): os.remove(temp_path)
-                            continue
-                        elif not is_google_doc and new_hash == old_hash:
-                            results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                            results[doc_type]['hash'] = old_hash
+                            results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
                             if os.path.exists(temp_path): os.remove(temp_path)
                             continue
 
+                    # --- ZERO-GHOST PROTOCOL: GATE 2 (SMART CONTENT MATCH) ---
+                    new_text = ""
+                    if is_google_doc:
+                        new_text = self._extract_text_from_pdf(temp_path)
+                        if last_record:
+                            old_text = getattr(last_record, f"{doc_type}_text")
+                            if AI_AVAILABLE and new_text and old_text:
+                                try:
+                                    vect = TfidfVectorizer(min_df=1)
+                                    tfidf = vect.fit_transform([old_text, new_text])
+                                    sim = (tfidf * tfidf.T).toarray()[0,1]
+                                    if sim > 0.998: # Extreme similarity
+                                        logger.info(f"   [AI GUARD] {doc_type.upper()} text is 99.8% identical. Skipping v2.")
+                                        results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                                        results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
+                                        results[doc_type]['text'] = old_text
+                                        if os.path.exists(temp_path): os.remove(temp_path)
+                                        continue
+                                except: pass
+                            elif new_text == old_text:
+                                logger.info(f"   [DNA MATCH] {doc_type.upper()} exact text match. Skipping v2.")
+                                results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                                results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
+                                results[doc_type]['text'] = old_text
+                                if os.path.exists(temp_path): os.remove(temp_path)
+                                continue
+
+                    # If we reach here, it is a REAL change
                     results[doc_type]['bin'] = final_bytes
                     results[doc_type]['hash'] = new_hash
                     results[doc_type]['text'] = new_text
@@ -329,7 +334,7 @@ class ArchivalEngine:
                         recovered_from_vault += 1
                     else: raise e
             except Exception as e:
-                error_msg += f"{doc_type.upper()}: {str(e)[:30]}; "
+                error_msg += f"{doc_type.upper()}: {str(e)[:50]}; "
 
         if total_changed == 0 and recovered_from_vault == 0:
             if last_record: return {'status': 'unchanged', 'version': last_record.version}
