@@ -221,26 +221,38 @@ def get_grouped_ledger():
         doc_versions = defaultdict(lambda: defaultdict(int))
         grouped_data = {}
         for r in records:
-            project_key = f"{r.project_id}_{r.project_title}"
+            # Consistent project key using normalized Team ID and Title
+            pid_safe = str(r.project_id).strip().lower()
+            project_key = f"{pid_safe}_{r.project_title.strip().lower()}"
+            
             if project_key not in grouped_data:
                 grouped_data[project_key] = {
-                    "project_id": r.project_id, "project_title": r.project_title,
-                    "academic_year": r.academic_year, "workbook_name": r.workbook_name,
+                    "project_id": r.project_id, 
+                    "project_title": r.project_title,
+                    "academic_year": r.academic_year, 
+                    "workbook_name": r.workbook_name,
+                    "db_ids": [], # Track ALL database IDs for deletion
                     "documents": { 
                         "srs": [], "sdd": [], "spmp": [], "std": [], "ri": [],
                         "source_code": [], "database": [], "readme": [] 
                     }
                 }
             target = grouped_data[project_key]
+            # Always add the record ID to the master list for deletion
+            target["db_ids"].append(int(r.id))
+
             for doc_type in ["srs", "sdd", "spmp", "std", "ri", "source_code", "database", "readme"]:
                 path = getattr(r, f"{doc_type}_local_path")
                 current_hash = getattr(r, f"{doc_type}_hash")
-                if path:
-                    # REMOVED HASH FILTERING - Every saved record is a valid version
+                
+                # Include the version if it was archived OR if it was a failed attempt for this project
+                if path or r.status == 'failed':
                     doc_versions[project_key][doc_type] += 1
                     target["documents"][doc_type].append({
-                        "id": r.id, "version": doc_versions[project_key][doc_type],
-                        "hash": current_hash, "timestamp": r.archived_at.isoformat() + 'Z' if r.archived_at else None,
+                        "id": int(r.id), # Ensure integer for frontend
+                        "version": doc_versions[project_key][doc_type],
+                        "hash": current_hash, 
+                        "timestamp": r.archived_at.isoformat() + 'Z' if r.archived_at else None,
                         "status": r.status
                     })
         result = list(grouped_data.values())
