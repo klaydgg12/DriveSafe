@@ -37,12 +37,41 @@ class ArchivalEngine:
         self.archive_root = archive_root
 
     def _extract_file_id(self, url):
-        if not url: return None
-        match = re.search(r'/d/([a-zA-Z0-9_-]{25,})', url)
-        if match: return match.group(1)
-        match = re.search(r'id=([a-zA-Z0-9_-]{25,})', url)
-        if match: return match.group(1)
-        return None
+        if not url: return None, False
+        # Folder pattern
+        match_folder = re.search(r'folders/([a-zA-Z0-9_-]{25,})', url)
+        if match_folder: return match_folder.group(1), True
+        
+        # File pattern
+        match_file = re.search(r'/d/([a-zA-Z0-9_-]{25,})', url)
+        if match_file: return match_file.group(1), False
+        match_id = re.search(r'id=([a-zA-Z0-9_-]{25,})', url)
+        if match_id: return match_id.group(1), False
+        return None, False
+
+    def _resolve_folder(self, folder_id):
+        """Find the best file inside a Google Drive folder"""
+        try:
+            query = f"'{folder_id}' in parents and trashed = false"
+            results = self.service.files().list(
+                q=query, 
+                fields="files(id, name, mimeType, modifiedTime)",
+                orderBy="modifiedTime desc"
+            ).execute()
+            files = results.get('files', [])
+            if not files: return None, None
+            
+            # Prefer PDFs, then Google Docs
+            for f in files:
+                if 'pdf' in f['mimeType'].lower(): return f['id'], f
+            for f in files:
+                if 'document' in f['mimeType'].lower(): return f['id'], f
+            
+            # Fallback to the first file
+            return files[0]['id'], files[0]
+        except Exception as e:
+            logger.error(f"Folder resolution failed for {folder_id}: {e}")
+            return None, None
 
     def _compute_hash(self, file_path):
         sha256_hash = hashlib.sha256()
@@ -101,6 +130,9 @@ class ArchivalEngine:
         try:
             file_metadata = self.service.files().get(fileId=file_id, fields='mimeType, name').execute()
             mime_type = file_metadata.get('mimeType')
+            file_name = file_metadata.get('name')
+            logger.info(f"Downloading: {file_name}")
+
             fh = io.BytesIO()
             if 'google-apps.document' in mime_type or 'google-apps.spreadsheet' in mime_type:
                 request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
@@ -121,7 +153,7 @@ class ArchivalEngine:
 
     def _get_file_metadata(self, file_id):
         try:
-            return self.service.files().get(fileId=file_id, fields='modifiedTime, md5Checksum').execute()
+            return self.service.files().get(fileId=file_id, fields='modifiedTime, md5Checksum, name, mimeType').execute()
         except: return None
 
     def archive_project(self, project_data, workbook_name="Archives", batch_id=None):
@@ -140,16 +172,25 @@ class ArchivalEngine:
         ).order_by(ArchivalLedger.version.desc()).first()
         
         doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'database', 'readme']
-        results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': None} for dt in doc_types}
+        results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': None, 'ts': None} for dt in doc_types}
         total_changed = 0
         error_msg = ""
         processed_file_ids = {}
 
         for doc_type in doc_types:
             link = project_data.get(f'{doc_type}_link')
-            file_id = self._extract_file_id(link)
-            if not file_id: continue
+            raw_id, is_folder = self._extract_file_id(link)
+            if not raw_id: continue
             
+            file_id = raw_id
+            if is_folder:
+                logger.info(f"Resolving Folder: {raw_id} for {doc_type.upper()}")
+                file_id, folder_meta = self._resolve_folder(raw_id)
+                if not file_id:
+                    error_msg += f"{doc_type.upper()}: Folder is empty; "
+                    continue
+                logger.info(f"Folder Resolved: Using file '{folder_meta['name']}' ({file_id})")
+
             if file_id in processed_file_ids:
                 res = processed_file_ids[file_id]['data']
                 results[doc_type] = res
@@ -160,8 +201,7 @@ class ArchivalEngine:
                 # 1. FETCH LIVE CLOCK FROM GOOGLE
                 metadata = self._get_file_metadata(file_id)
                 if not metadata:
-                    logger.warning(f"Could not fetch metadata for {doc_type.upper()}. Drive API might be unreachable.")
-                    error_msg += f"{doc_type.upper()}: Access Denied or File Not Found; "
+                    error_msg += f"{doc_type.upper()}: Access Denied; "
                     continue
 
                 current_drive_ts = metadata.get('modifiedTime', 'Unknown')
@@ -175,7 +215,7 @@ class ArchivalEngine:
                         vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc) + datetime.timedelta(seconds=3)
                         if drive_dt <= vault_dt:
                             is_modified = False
-                            logger.info(f"UNCHANGED: {doc_type.upper()} timestamp matches vault.")
+                            logger.info(f"UNCHANGED: {doc_type.upper()} matches vault timestamp.")
                     except: pass
 
                 if not is_modified:
@@ -187,7 +227,6 @@ class ArchivalEngine:
                     continue
 
                 # 3. PROCESS THE NEW VERSION
-                logger.info(f"Downloading new version for {doc_type.upper()}...")
                 import time
                 time.sleep(5) 
 
@@ -200,9 +239,9 @@ class ArchivalEngine:
                 except Exception as down_err:
                     err_str = str(down_err)
                     if "exportSizeLimitExceeded" in err_str:
-                        error_msg += f"{doc_type.upper()}: File too large for Auto-PDF. Student must upload a direct PDF file instead; "
+                        error_msg += f"{doc_type.upper()}: File too large for Auto-PDF; "
                     else:
-                        error_msg += f"{doc_type.upper()} Download Error: {err_str}; "
+                        error_msg += f"{doc_type.upper()} Download Error; "
                     continue
 
                 with open(temp_path, "rb") as f:
@@ -217,10 +256,23 @@ class ArchivalEngine:
                     file_text = self._extract_text_from_pdf(temp_path)
                 results[doc_type]['text'] = file_text
 
+                # SEMANTIC DEDUPLICATION (TEAM LEVEL)
+                if last_record:
+                    last_text = getattr(last_record, f"{doc_type}_text")
+                    if file_text and last_text:
+                        vectorizer = TfidfVectorizer().fit_transform([file_text, last_text])
+                        sim = cosine_similarity(vectorizer)[0][1]
+                        if sim > 0.999: # 99.9% identical
+                            logger.info(f"SEMANTIC MATCH: {doc_type.upper()} is identical to last version content. Skipping.")
+                            results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                            results[doc_type]['is_changed'] = False
+                            processed_file_ids[file_id] = {'data': results[doc_type]}
+                            if os.path.exists(temp_path): os.remove(temp_path)
+                            continue
+
                 total_changed += 1
                 results[doc_type]['is_changed'] = True
 
-                # Version naming
                 from sqlalchemy import func
                 prev_doc_v = db.session.query(func.count(ArchivalLedger.id)).filter(
                     ArchivalLedger.project_id == project_id,
@@ -229,22 +281,20 @@ class ArchivalEngine:
 
                 doc_v = (prev_doc_v or 0) + 1
                 final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{doc_v}.pdf")
-                if os.path.exists(final_path): final_path = final_path.replace(".pdf", f"_{int(time.time())}.pdf")
-
                 os.rename(temp_path, final_path)
                 results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
                 processed_file_ids[file_id] = {'data': results[doc_type]}
 
             except Exception as e:
                 logger.error(f"Error processing {doc_type}: {e}", exc_info=True)
-                error_msg += f"{doc_type.upper()} System Error: {str(e)}; "
+                error_msg += f"{doc_type.upper()} System Error; "
+
         if total_changed == 0 and last_record:
             return {'status': 'unchanged', 'message': 'No edits found in Google Drive since last archive.', 'version': last_record.version}
 
         current_version = (last_record.version if last_record else 0) + 1
         status = "archived" if not error_msg else "failed"
 
-        # ALWAYS save the record so the dashboard and ledger can track the attempt
         try:
             ledger_entry = ArchivalLedger(
                 project_id=project_id, project_title=project_data.get('project_title'),
