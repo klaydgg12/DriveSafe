@@ -246,9 +246,8 @@ def get_grouped_ledger():
                 path = getattr(r, f"{doc_type}_local_path")
                 current_hash = getattr(r, f"{doc_type}_hash")
                 
-                # STRICT VERSIONING: Only count if status is 'archived' AND path is valid
-                # This prevents 'failed' attempts from appearing as ghost revisions
-                if r.status == 'archived' and path and str(path).strip():
+                # STRICT VERSIONING: Include 'archived' OR 'partial' successes
+                if r.status in ['archived', 'partial'] and path and str(path).strip():
                     doc_versions[project_key][doc_type] += 1
                     target["documents"][doc_type].append({
                         "id": int(r.id),
@@ -498,8 +497,8 @@ def download_file(id, doc_type):
 def get_stats():
     if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
     from models import ArchivalLedger
-    # Only count projects that have at least one SUCCESSFUL archival record
-    archived_count = db.session.query(ArchivalLedger.project_id).filter(ArchivalLedger.status == 'archived').distinct().count()
+    # Only count projects that have at least one SUCCESS or PARTIAL archival record
+    archived_count = db.session.query(ArchivalLedger.project_id).filter(ArchivalLedger.status.in_(['archived', 'partial'])).distinct().count()
     pending_count = 0
     service_account_ok = False
     try:
