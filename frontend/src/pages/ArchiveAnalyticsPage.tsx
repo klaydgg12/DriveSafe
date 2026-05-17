@@ -4,8 +4,8 @@ import {
   History, Search, Folder, BookOpen, 
   ArrowLeft, RefreshCw,
   Clock, Eye, Trash2, ChevronRight, ChevronDown,
-  Layers, User, CheckCircle2, AlertCircle, Calendar
-} from "lucide-react";
+  Layers, User, CheckCircle2, AlertCircle
+  } from "lucide-react";
 import Logo from "../components/Logo";
 
 interface Project {
@@ -143,7 +143,7 @@ const ArchiveAnalyticsPage = () => {
             </button>
             <div className="flex items-center gap-3">
               <Logo size={32} />
-              <span className="text-lg font-bold text-slate-900 tracking-tight">Archive Transactions</span>
+              <span className="text-lg font-bold text-slate-900 tracking-tight">Reports</span>
             </div>
           </div>
           <button onClick={fetchTransactions} className="p-2 text-slate-500 hover:text-indigo-600 rounded-lg transition-all">
@@ -156,7 +156,7 @@ const ArchiveAnalyticsPage = () => {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-              <History className="text-indigo-600" /> Vault Transaction Log
+              <History className="text-indigo-600" /> Reports
             </h1>
             <p className="text-slate-500 text-sm font-medium mt-1">Sequential history organized by Workbook and Sheet</p>
           </div>
@@ -269,7 +269,9 @@ const ArchiveAnalyticsPage = () => {
                                                   {p.status === 'archived' ? (
                                                     <CheckCircle2 size={16} className="text-emerald-500" />
                                                   ) : (
-                                                    <AlertCircle size={16} className="text-amber-500" title={p.error} />
+                                                    <div title={p.error}>
+                                                      <AlertCircle size={16} className="text-amber-500" />
+                                                    </div>
                                                   )}
                                                   <span className={`text-[10px] font-black uppercase tracking-tighter ${p.status === 'archived' ? 'text-emerald-600' : 'text-amber-600'}`}>
                                                     {p.status}

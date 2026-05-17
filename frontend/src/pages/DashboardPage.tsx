@@ -187,19 +187,18 @@ const DashboardPage: React.FC = () => {
               <Zap className="w-10 h-10" />
             </div>
             <div className="text-center md:text-left">
-              <h3 className="text-3xl font-black text-gray-900 mb-2 tracking-tighter">Vault Analytics & History</h3>
+              <h3 className="text-3xl font-black text-gray-900 mb-2 tracking-tighter">Reports</h3>
               <p className="text-gray-500 font-medium leading-relaxed text-lg max-w-2xl">
                 Real-time timeline of archival sessions. Track batches by date, team, or file type with dynamic search history.
               </p>
             </div>
-          </div>
-          <a 
+            </div>
+            <a
             href="#archive-analytics"
             className="w-full md:w-auto px-10 py-5 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white rounded-2xl font-black text-sm tracking-[0.2em] transition-all shadow-xl shadow-amber-200 active:scale-[0.98] shrink-0 text-center cursor-pointer relative z-30"
-          >
-            Open Analytics
-          </a>
-        </div>
+            >
+            Open Reports
+            </a>        </div>
       </main>
 
       <footer className="mt-auto p-10 border-t border-gray-200/50 bg-white/50 backdrop-blur-md flex flex-col md:flex-row justify-between items-center gap-4 text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] relative z-10">
