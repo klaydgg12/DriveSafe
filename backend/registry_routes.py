@@ -496,7 +496,8 @@ def download_file(id, doc_type):
 def get_stats():
     if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
     from models import ArchivalLedger
-    archived_count = db.session.query(ArchivalLedger.project_id).distinct().count()
+    # Only count projects that have at least one SUCCESSFUL archival record
+    archived_count = db.session.query(ArchivalLedger.project_id).filter(ArchivalLedger.status == 'archived').distinct().count()
     pending_count = 0
     service_account_ok = False
     try:
