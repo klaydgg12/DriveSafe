@@ -49,7 +49,7 @@ class ArchivalEngine:
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v15 Initialized (Digital DNA Mode)")
+        logger.info(f"ArchivalEngine Master v16 Initialized (Gap-Filling Mode)")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -110,7 +110,7 @@ class ArchivalEngine:
         if is_pdf and not data.startswith(b'%PDF-'): return False
         return True
 
-    def _construct_url(self, file_id, original_url=None, is_google_doc=True, clean=False, inject_token=None):
+    def _construct_url(self, file_id, original_url=None, is_google_doc=True, inject_token=None):
         params = {'format': 'pdf'}
         if not is_google_doc:
             params = {'export': 'download', 'id': file_id, 'confirm': 't'}
@@ -118,10 +118,9 @@ class ArchivalEngine:
         else:
             base_url = f"https://docs.google.com/document/d/{file_id}/export"
 
-        if inject_token:
-            params['access_token'] = inject_token
+        if inject_token: params['access_token'] = inject_token
 
-        if not clean and original_url and '?' in str(original_url):
+        if original_url and '?' in str(original_url):
             try:
                 parsed = urlparse(str(original_url))
                 query = parse_qs(parsed.query)
@@ -141,26 +140,21 @@ class ArchivalEngine:
         logger.info(f"[{self.identity_label}] DOWNLOADING: {file_name}")
 
         final_data = None
-        
-        # Phase 1: Digital Twin
+        # Attempt 1: Stealth Mirror
         try:
             url = self._construct_url(file_id, original_url, is_google_doc=is_google)
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'Accept': 'application/pdf,application/octet-stream,*/*',
-            }
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'}
             if self.creds:
                 if hasattr(self.creds, 'valid') and not self.creds.valid: 
                     try: self.creds.refresh(requests.Session())
                     except: pass
                 headers['Authorization'] = f'Bearer {self.creds.token}'
-            
             resp = self.session.get(url, headers=headers, timeout=60, allow_redirects=True)
             if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=is_pdf_target):
                 final_data = resp.content
         except: pass
 
-        # Phase 2: Token Injection
+        # Attempt 2: Token Injection
         if not final_data and self.creds:
             try:
                 url = self._construct_url(file_id, original_url, is_google_doc=is_google, inject_token=self.creds.token)
@@ -169,7 +163,7 @@ class ArchivalEngine:
                     final_data = resp.content
             except: pass
 
-        # Phase 3: Official API
+        # Attempt 3: API
         if not final_data:
             try:
                 fh = io.BytesIO()
@@ -182,8 +176,7 @@ class ArchivalEngine:
                      final_data = fh.getvalue()
             except: pass
 
-        if not final_data:
-            raise Exception("Access Denied (Google Lock)")
+        if not final_data: raise Exception("Access Denied (Google Lock)")
 
         # Word to PDF conversion
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
@@ -205,8 +198,7 @@ class ArchivalEngine:
                     try: self.service.files().delete(fileId=t_id).execute()
                     except: pass
 
-        if is_pdf_target and not final_data.startswith(b'%PDF-'):
-            raise Exception("Institutional lock prevents PDF conversion")
+        if is_pdf_target and not final_data.startswith(b'%PDF-'): raise Exception("PDF Conversion Locked")
 
         with open(destination_path, 'wb') as f: f.write(final_data)
         return final_data
@@ -220,18 +212,35 @@ class ArchivalEngine:
         base_project_dir = os.path.join(self.archive_root, workbook_name, academic_year, batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}")
         os.makedirs(base_project_dir, exist_ok=True)
         
+        # --- GLOBAL PROJECT HISTORY (Ignore Sheet Name here to find existing records) ---
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id, academic_year=academic_year
         ).order_by(ArchivalLedger.version.desc()).first()
         
         doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'presentation', 'source_code', 'database', 'readme']
-        results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': b'', 'ts': None, 'text': ''} for dt in doc_types}
+        results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': b'', 'ts': None, 'text': '', 'url': None} for dt in doc_types}
         total_changed = 0
         error_msg = ""
         recovered_from_vault = 0
 
         for doc_type in doc_types:
             link = project_data.get(f'{doc_type}_link')
+            results[doc_type]['url'] = link
+            
+            # --- GAP-FILLING PERSISTENCE ---
+            # If the current sheet doesn't have this link, check if we have it from a previous archive
+            if not link and last_record:
+                old_path = getattr(last_record, f"{doc_type}_local_path")
+                if old_path:
+                    logger.info(f"   [INHERITING] {doc_type.upper()} inherited from previous sheet version.")
+                    results[doc_type]['path'] = old_path
+                    results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
+                    results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
+                    results[doc_type]['url'] = getattr(last_record, f"{doc_type}_original_url")
+                    continue
+            
+            if not link: continue
+            
             raw_id, is_folder = self._extract_file_id(link)
             if not raw_id: continue
             
@@ -251,11 +260,11 @@ class ArchivalEngine:
                 is_modified = True
                 if last_record:
                     vault_hash = getattr(last_record, f"{doc_type}_hash")
-                    # Step 1: Check MD5 (Best for non-docs)
+                    # Step 1: Check MD5
                     if drive_md5 and vault_hash and drive_md5 == vault_hash:
                         is_modified = False
                     else:
-                        # Step 2: Check Time (2s jitter)
+                        # Step 2: Check Time (Strict 2s jitter)
                         try:
                             drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
                             vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
@@ -277,30 +286,22 @@ class ArchivalEngine:
                     final_bytes = self.download_file(file_id, temp_path, original_url=link)
                     new_hash = hashlib.sha256(final_bytes).hexdigest()
                     
-                    # --- NEW STEP 3: DIGITAL DNA (TEXT COMPARISON) ---
+                    # Step 3: Text DNA comparison
                     new_text = ""
-                    # We only check DNA for textual documents
                     is_text_doc = doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'readme']
-                    if is_text_doc:
-                        new_text = self._extract_text_from_pdf(temp_path)
+                    if is_text_doc: new_text = self._extract_text_from_pdf(temp_path)
                     
                     if last_record:
                         old_hash = getattr(last_record, f"{doc_type}_hash")
                         old_text = getattr(last_record, f"{doc_type}_text")
-                        
-                        if is_text_doc:
-                            # If text is identical, ignore invisible metadata changes
-                            if new_text and old_text and new_text.strip() == old_text.strip():
-                                logger.info(f"DEDUPLICATED (DNA): {doc_type.upper()} text matches vault.")
+                        if is_text_doc and new_text and old_text and new_text.strip() == old_text.strip():
                                 results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                                 results[doc_type]['hash'] = old_hash
                                 results[doc_type]['text'] = old_text
                                 results[doc_type]['bin'] = b''
                                 if os.path.exists(temp_path): os.remove(temp_path)
                                 continue
-                        else:
-                            # For binary files (source code/db), bits must match perfectly
-                            if new_hash == old_hash:
+                        elif not is_text_doc and new_hash == old_hash:
                                 results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                                 results[doc_type]['hash'] = old_hash
                                 results[doc_type]['bin'] = b''
@@ -345,12 +346,12 @@ class ArchivalEngine:
                 workbook_name=workbook_name, archived_by=archived_by, batch_id=batch_id,
                 status=status, version=current_version, archived_at=datetime.datetime.utcnow(),
                 error_message=error_msg.strip(),
-                srs_original_url=project_data.get('srs_link'), sdd_original_url=project_data.get('sdd_link'),
-                spmp_original_url=project_data.get('spmp_link'), std_original_url=project_data.get('std_link'),
-                ri_original_url=project_data.get('ri_link'), research_paper_original_url=project_data.get('research_paper_link'),
-                usability_test_original_url=project_data.get('usability_test_link'), presentation_original_url=project_data.get('presentation_link'),
-                source_code_original_url=project_data.get('source_code_link'), github_original_url=project_data.get('github_link'),
-                database_original_url=project_data.get('database_link'), readme_original_url=project_data.get('readme_link'),
+                srs_original_url=results['srs']['url'], sdd_original_url=results['sdd']['url'],
+                spmp_original_url=results['spmp']['url'], std_original_url=results['std']['url'],
+                ri_original_url=results['ri']['url'], research_paper_original_url=results['research_paper']['url'],
+                usability_test_original_url=results['usability_test']['url'], presentation_original_url=results['presentation']['url'],
+                source_code_original_url=results['source_code']['url'], database_original_url=results['database']['url'],
+                readme_original_url=results['readme']['url'],
                 srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
                 spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
                 ri_local_path=results['ri']['path'], research_paper_local_path=results['research_paper']['path'],
@@ -385,12 +386,12 @@ class ArchivalEngine:
                     workbook_name=workbook_name, archived_by=archived_by, batch_id=batch_id,
                     status=status, version=current_version, archived_at=datetime.datetime.utcnow(),
                     error_message=f"{error_msg.strip()} (Disk Only)".strip(),
-                    srs_original_url=project_data.get('srs_link'), sdd_original_url=project_data.get('sdd_link'),
-                    spmp_original_url=project_data.get('spmp_link'), std_original_url=project_data.get('std_link'),
-                    ri_original_url=project_data.get('ri_link'), research_paper_original_url=project_data.get('research_paper_link'),
-                    usability_test_original_url=project_data.get('usability_test_link'), presentation_original_url=project_data.get('presentation_link'),
-                    source_code_original_url=project_data.get('source_code_link'), github_original_url=project_data.get('github_link'),
-                    database_original_url=project_data.get('database_link'), readme_original_url=project_data.get('readme_link'),
+                    srs_original_url=results['srs']['url'], sdd_original_url=results['sdd']['url'],
+                    spmp_original_url=results['spmp']['url'], std_original_url=results['std']['url'],
+                    ri_original_url=results['ri']['url'], research_paper_original_url=results['research_paper']['url'],
+                    usability_test_original_url=results['usability_test']['url'], presentation_original_url=results['presentation']['url'],
+                    source_code_original_url=results['source_code']['url'], database_original_url=results['database']['url'],
+                    readme_original_url=results['readme']['url'],
                     srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
                     spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
                     ri_local_path=results['ri']['path'], research_paper_local_path=results['research_paper']['path'],
