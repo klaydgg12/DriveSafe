@@ -131,7 +131,7 @@ class ArchivalEngine:
             
             logger.info(f"[{self.identity_label}] ARCHIVING: {file_name}")
 
-            # --- ATTEMPT 1: HIGH-FIDELITY BROWSER MIRROR ---
+            # --- ATTEMPT 1: HIGH-FIDELITY BROWSER MIRROR (Bypasses School Walls) ---
             final_data = None
             try:
                 url = self._construct_export_url(file_id, original_url, is_google_doc=is_google)
@@ -150,7 +150,7 @@ class ArchivalEngine:
                     final_data = resp.content
             except Exception as e: logger.warning(f"Mirror failed: {e}")
 
-            # --- ATTEMPT 2: OFFICIAL API ---
+            # --- ATTEMPT 2: OFFICIAL API (Safe Fallback) ---
             if not final_data:
                 try:
                     fh = io.BytesIO()
@@ -175,7 +175,7 @@ class ArchivalEngine:
                     temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id').execute()
                     t_id = temp_file.get('id')
                     try:
-                        time.sleep(10)
+                        time.sleep(10) # 10s breathe for high-quality conversion
                         req = self.service.files().export_media(fileId=t_id, mimeType='application/pdf')
                         fh = io.BytesIO()
                         dld = MediaIoBaseDownload(fh, req)
