@@ -202,10 +202,9 @@ class RegistrySheetsService:
                     team_groups[merge_key] = project
                 
             # Convert dictionary back to a sorted list based on original row order
-            projects_list = sorted(team_groups.values(), key=lambda x: x['row_index'])
-            available_columns = [key.replace('_link', '') for key in col_map.keys() if '_link' in key]
-            
-            return {'projects': projects_list, 'available_docs': available_columns}
+            available_docs = [key.replace('_link', '') for key in col_map.keys() if '_link' in key]
+
+            return {'projects': projects_list, 'available_docs': available_docs}
         except Exception as e:
             logger.error(f"Error fetching projects: {e}")
             raise e
