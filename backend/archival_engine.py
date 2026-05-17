@@ -9,8 +9,7 @@ import time
 import requests
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
-from google.oauth2 import service_account
-from google.oauth2.credentials import Credentials
+from oauth2client.service_account import Credentials
 from models import db, ArchivalLedger
 
 # AI Imports
@@ -107,7 +106,7 @@ class ArchivalEngine:
 
     def download_file(self, file_id, destination_path):
         """
-        ULTIMATE MULTI-PATH DOWNLOAD WITH "BREATHE" RETRIES
+        ULTIMATE MULTI-PATH DOWNLOAD WITH PUBLIC FALLBACK
         """
         try:
             # 1. Fetch Metadata
@@ -135,7 +134,7 @@ class ArchivalEngine:
             except Exception as e:
                 logger.warning(f"API Attempt failed for {file_name}: {e}")
 
-            # --- PHASE 2: BROWSER-MIRROR FALLBACK ---
+            # --- PHASE 2: BROWSER-MIRROR FALLBACK (Authenticated) ---
             if not final_data or (is_pdf_target and not final_data.startswith(b'%PDF-')):
                 logger.info(f"[{self.identity_label}] Falling back to HTTP Mirror for {file_name}...")
                 try:
@@ -145,46 +144,52 @@ class ArchivalEngine:
                     if resp.status_code == 200: final_data = resp.content
                 except: pass
 
-            # --- PHASE 3: THE "BREATHE" CONVERSION (For massive Office/Text docs) ---
-            if is_pdf_target and (not final_data or not final_data.startswith(b'%PDF-')):
-                 if file_name.lower().endswith(('.docx', '.doc', '.md', '.txt')) or 'officedocument' in mime_type:
-                    logger.info(f"[{self.identity_label}] Forcing High-Fidelity Conversion with BREATHE logic...")
+            # --- PHASE 3: PUBLIC FALLBACK (Unauthenticated) ---
+            if not final_data or (is_pdf_target and not final_data.startswith(b'%PDF-')):
+                logger.info(f"[{self.identity_label}] Falling back to 100% Public Download for {file_name}...")
+                try:
+                    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+                    resp = requests.get(url, timeout=60)
+                    if resp.status_code == 200: final_data = resp.content
+                except: pass
+
+            # --- FINAL VALIDATION & CONVERSION ---
+            if not final_data: raise Exception("All download paths failed. File is unreachable.")
+
+            # If it's a Word/MD file that came down as raw bytes, FORCE conversion
+            if is_pdf_target and not final_data.startswith(b'%PDF-'):
+                if final_data.startswith(b'PK\x03\x04') or file_name.lower().endswith(('.docx', '.doc', '.md', '.txt')):
+                    logger.info(f"FORCING CONVERSION for non-PDF raw data: {file_name}")
                     temp_meta = {'name': f"CONV_{int(time.time())}", 'mimeType': 'application/vnd.google-apps.document'}
-                    media = MediaIoBaseUpload(io.BytesIO(final_data if final_data else b''), mimetype='text/plain' if '.md' in file_name else mime_type, resumable=True)
+                    upload_mime = 'text/plain' if file_name.endswith('.md') else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                    media = MediaIoBaseUpload(io.BytesIO(final_data), mimetype=upload_mime, resumable=True)
                     temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id').execute()
                     t_id = temp_file.get('id')
-                    
                     try:
-                        # BREATHE TACTIC: Wait longer and retry up to 3 times
-                        for attempt in range(3):
-                            wait = 10 + (attempt * 10)
-                            logger.info(f"[{self.identity_label}] BREATHE: Waiting {wait}s for Google (Attempt {attempt+1}/3)...")
-                            time.sleep(wait)
-                            
-                            req = self.service.files().export_media(fileId=t_id, mimeType='application/pdf')
-                            fh = io.BytesIO()
-                            dld = MediaIoBaseDownload(fh, req)
-                            d_done = False
-                            while not d_done: _, d_done = dld.next_chunk()
-                            data = fh.getvalue()
-                            if data.startswith(b'%PDF-'):
-                                final_data = data
-                                break
+                        time.sleep(5)
+                        req = self.service.files().export_media(fileId=t_id, mimeType='application/pdf')
+                        fh = io.BytesIO()
+                        dld = MediaIoBaseDownload(fh, req)
+                        d_done = False
+                        while not d_done: _, d_done = dld.next_chunk()
+                        final_data = fh.getvalue()
                     finally:
                         try: self.service.files().delete(fileId=t_id).execute()
                         except: pass
 
-            # FINAL VALIDATION
-            if not final_data or (is_pdf_target and not final_data.startswith(b'%PDF-')):
-                snippet = final_data[:100].decode('utf-8', errors='ignore') if final_data else "None"
+            # LAST CHANCE CHECK
+            if is_pdf_target and not final_data.startswith(b'%PDF-'):
+                snippet = final_data[:100].decode('utf-8', errors='ignore')
                 if "<html" in snippet.lower():
-                     raise Exception("Google blocked export. File too large (>10MB). Student must upload direct PDF.")
+                     raise Exception("Google blocked export. File too large or restricted. Student must upload direct PDF.")
                 raise Exception("Corrupted document: Content is not a valid PDF.")
 
-            with open(destination_path, 'wb') as f: f.write(final_data)
+            with open(destination_path, 'wb') as f:
+                f.write(final_data)
+            
             return final_data
         except Exception as e:
-            logger.error(f"Ultimate Failure for {file_id}: {e}")
+            logger.error(f"Ultimate Download Failure for {file_id}: {e}")
             raise e
 
     def _get_file_metadata(self, file_id):
@@ -304,7 +309,6 @@ class ArchivalEngine:
         status = "partial" if error_msg and total_changed > 0 else ("failed" if error_msg else "archived")
         current_version = (last_record.version if last_record else 0) + (1 if status in ["archived", "partial"] else 0)
 
-        # --- SUCCESS-FIRST SAVE PROTOCOL ---
         MAX_BIN_SIZE = 15 * 1024 * 1024 
         def safe_bin(dt):
             b = results[dt]['bin']
