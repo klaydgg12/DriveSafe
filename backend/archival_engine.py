@@ -144,61 +144,82 @@ class ArchivalEngine:
 
     def download_file(self, file_id, destination_path):
         try:
-            # 1. Get metadata to determine type
-            file_metadata = self.service.files().get(fileId=file_id, fields='mimeType, name').execute()
-            mime_type = file_metadata.get('mimeType', '')
-            file_name = file_metadata.get('name', 'unknown')
+            # 1. Get metadata
+            meta = self.service.files().get(fileId=file_id, fields='mimeType, name, size').execute()
+            mime_type = meta.get('mimeType', '').lower()
+            file_name = meta.get('name', 'unknown')
             
-            logger.info(f"[{self.identity_label}] Downloading: {file_name} ({mime_type})")
-
+            logger.info(f"[{self.identity_label}] Analyzing: {file_name} ({mime_type})")
+            
+            # --- PHASE 1: DIRECT DOWNLOAD ---
             final_fh = io.BytesIO()
+            is_native_google = 'google-apps' in mime_type
             
-            # CASE A: Native Google Doc/Sheet
-            if 'google-apps.document' in mime_type or 'google-apps.spreadsheet' in mime_type:
-                try:
-                    request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
-                    downloader = MediaIoBaseDownload(final_fh, request)
-                    done = False
-                    while not done:
-                        _, done = downloader.next_chunk()
-                except Exception as e:
-                    if "exportSizeLimitExceeded" in str(e) or "403" in str(e):
-                        logger.info(f"[{self.identity_label}] Export failed. Trying Browser-Mirror HTTP Export...")
-                        return self._public_download_fallback(file_id, destination_path, is_export=True, is_sheet='spreadsheet' in mime_type)
-                    raise e
-            # CASE B: Binary File
+            if is_native_google:
+                logger.info(f"Exporting Native Google Asset: {file_name}")
+                request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
             else:
-                try:
-                    request = self.service.files().get_media(fileId=file_id)
-                    downloader = MediaIoBaseDownload(final_fh, request)
-                    done = False
-                    while not done:
-                        _, done = downloader.next_chunk()
-                except Exception as e:
-                    if "403" in str(e):
-                        return self._public_download_fallback(file_id, destination_path)
-                    raise e
+                request = self.service.files().get_media(fileId=file_id)
 
-            # --- VALIDATION: Strict PDF Integrity ---
-            data = final_fh.getvalue()
-            if not data: raise Exception("Downloaded file is empty")
+            downloader = MediaIoBaseDownload(final_fh, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
             
-            # If we are saving as a PDF, it MUST be a valid PDF binary
-            if destination_path.lower().endswith('.pdf'):
-                if not data.startswith(b'%PDF-'):
-                    # If it's small, it's probably an HTML error message from Google
-                    snippet = data[:50].decode('utf-8', errors='ignore')
-                    logger.error(f"CORRUPTION DETECTED: Not a valid PDF. Content starts with: {snippet}")
-                    if "<html" in snippet.lower() or "google" in snippet.lower():
-                         raise Exception("Google blocked the PDF conversion. Link might be restricted or too large.")
-                    raise Exception("Downloaded file is corrupted or not a valid PDF.")
+            data = final_fh.getvalue()
+            if not data: raise Exception("File content is empty")
 
+            # --- PHASE 2: INTELLIGENT CONVERSION ---
+            # If we need a PDF but the data is NOT a PDF (e.g. it's a docx or md)
+            is_pdf_path = destination_path.lower().endswith('.pdf')
+            starts_with_pdf = data.startswith(b'%PDF-')
+            starts_with_zip = data.startswith(b'PK\x03\x04') # Office docs are ZIPs
+
+            if is_pdf_path and not starts_with_pdf:
+                # If it's a ZIP/Office file or Text/MD, we MUST convert it to PDF
+                if starts_with_zip or 'officedocument' in mime_type or file_name.lower().endswith(('.md', '.txt', '.docx', '.doc')):
+                    logger.info(f"Converting non-PDF format ({file_name}) to high-fidelity PDF...")
+                    
+                    temp_meta = {
+                        'name': f"DRIVESAFE_CONV_{int(time.time())}",
+                        'mimeType': 'application/vnd.google-apps.document'
+                    }
+                    upload_mime = 'text/plain' if file_name.lower().endswith('.md') else mime_type
+                    if starts_with_zip and not 'officedocument' in mime_type:
+                        upload_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+
+                    media = MediaIoBaseUpload(io.BytesIO(data), mimetype=upload_mime, resumable=True)
+                    temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id').execute()
+                    temp_id = temp_file.get('id')
+                    
+                    try:
+                        time.sleep(5) # Give Google 5s to bake massive 30MB files
+                        conv_fh = io.BytesIO()
+                        req = self.service.files().export_media(fileId=temp_id, mimeType='application/pdf')
+                        dld = MediaIoBaseDownload(conv_fh, req)
+                        d_done = False
+                        while not d_done:
+                            _, d_done = dld.next_chunk()
+                        data = conv_fh.getvalue()
+                    finally:
+                        try: self.service.files().delete(fileId=temp_id).execute()
+                        except: pass
+
+                # Final integrity check
+                if not data.startswith(b'%PDF-'):
+                    snippet = data[:50].decode('utf-8', errors='ignore')
+                    if "<html" in snippet.lower() or "google" in snippet.lower():
+                         raise Exception("Google blocked conversion. File is too large (>10MB). Student MUST upload as PDF.")
+                    raise Exception("File is not a valid PDF. Please upload a PDF version.")
+
+            # --- PHASE 3: SAVE TO DISK ---
             with open(destination_path, 'wb') as f:
                 f.write(data)
             
-            return destination_path
+            # Update the results bin so the DB save uses the NEW converted data
+            return data # Return the final bytes for the caller to update results[dt]['bin']
         except Exception as e:
-            logger.error(f"Download Error for {file_id}: {e}")
+            logger.error(f"Download/Conv Error for {file_id}: {e}")
             raise e
 
     def _public_download_fallback(self, file_id, destination_path, is_export=False, is_sheet=False):
