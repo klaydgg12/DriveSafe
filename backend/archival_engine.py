@@ -14,7 +14,7 @@ from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from models import db, ArchivalLedger
 
-# Conditional AI import
+# AI Import
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
@@ -33,11 +33,12 @@ class ArchivalEngine:
             "https://www.googleapis.com/auth/drive.file",
             "https://www.googleapis.com/auth/spreadsheets"
         ]
-        self.identity_label = "TEACHER" if user_credentials else "ROBOT"
-        self.creds = user_credentials
-        
+        self.identity_label = "ROBOT"
+        self.creds = None
         if user_credentials:
+            self.creds = user_credentials
             self.service = build('drive', 'v3', credentials=user_credentials, cache_discovery=False)
+            self.identity_label = "TEACHER"
         elif service_account_json_path:
             try:
                 if service_account_json_path.strip().startswith('{'):
@@ -55,7 +56,7 @@ class ArchivalEngine:
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v19 Initialized (Zero-Ghost Protocol)")
+        logger.info(f"ArchivalEngine Master v20 Initialized (Smart Shortcut Protocol)")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -70,27 +71,63 @@ class ArchivalEngine:
         return None, False
 
     def _get_file_metadata(self, file_id):
+        """Metadata fetch with Shortcut Resolution and Shared Drive support"""
         try:
-            return self.service.files().get(fileId=file_id, fields='modifiedTime, md5Checksum, name, mimeType, size').execute()
-        except: return None
+            # supportsAllDrives=True allows access to university Shared Drives
+            meta = self.service.files().get(
+                fileId=file_id, 
+                fields='id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails, size',
+                supportsAllDrives=True
+            ).execute()
+            
+            # --- SMART SHORTCUT RESOLUTION ---
+            if meta.get('mimeType') == 'application/vnd.google-apps.shortcut':
+                target_id = meta.get('shortcutDetails', {}).get('targetId')
+                if target_id:
+                    logger.info(f"   [SHORTCUT] Resolving shortcut to Target: {target_id}")
+                    return self._get_file_metadata(target_id)
+            return meta
+        except Exception as e:
+            logger.warning(f"Metadata fetch failed for {file_id}: {e}")
+            return None
 
     def _resolve_folder(self, folder_id, target_hint=None):
         try:
+            # includeItemsFromAllDrives allows searching Shared Drives
             query = f"'{folder_id}' in parents and trashed = false"
             results = self.service.files().list(
-                q=query, fields="files(id, name, mimeType, modifiedTime, md5Checksum)", orderBy="modifiedTime desc"
+                q=query, 
+                fields="files(id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails)", 
+                orderBy="modifiedTime desc",
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True
             ).execute()
             files = results.get('files', [])
             if not files: return None, None
+            
+            selected_file = None
             if target_hint:
                 hint = target_hint.lower().replace('finalized', '').replace('software', '').strip()
                 for f in files:
-                    if hint in f['name'].lower(): return f['id'], f
-            for f in files:
-                if 'pdf' in f['mimeType'].lower(): return f['id'], f
-            for f in files:
-                if 'document' in f['mimeType'].lower(): return f['id'], f
-            return files[0]['id'], files[0]
+                    if hint in f['name'].lower(): 
+                        selected_file = f
+                        break
+            
+            if not selected_file:
+                for f in files:
+                    if 'pdf' in f['mimeType'].lower() or 'document' in f['mimeType'].lower():
+                        selected_file = f
+                        break
+            
+            if not selected_file: selected_file = files[0]
+
+            # Shortcut check within folder
+            fid = selected_file['id']
+            if selected_file.get('mimeType') == 'application/vnd.google-apps.shortcut':
+                fid = selected_file.get('shortcutDetails', {}).get('targetId') or fid
+                return fid, self._get_file_metadata(fid)
+            
+            return fid, selected_file
         except Exception as e:
             logger.error(f"Folder resolution failed for {folder_id}: {e}")
             return None, None
@@ -132,6 +169,8 @@ class ArchivalEngine:
 
     def download_file(self, file_id, destination_path, original_url=None):
         meta = self._get_file_metadata(file_id)
+        if meta and meta.get('id'): file_id = meta.get('id') # Target ID if shortcut was resolved
+        
         mime_type = meta.get('mimeType', '').lower() if meta else 'unknown'
         file_name = meta.get('name', 'unknown') if meta else 'Document'
         is_google = 'google-apps' in mime_type or (original_url and 'docs.google.com' in str(original_url))
@@ -140,10 +179,17 @@ class ArchivalEngine:
         logger.info(f"[{self.identity_label}] DOWNLOADING: {file_name}")
         final_data = None
         
-        # 1. Stealth Mirror
+        # 1. Digital Twin with Improved Headers
         try:
             url = self._construct_url(file_id, original_url, is_google_doc=is_google)
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'}
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                'Accept': 'application/pdf,application/octet-stream,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Referer': 'https://docs.google.com/',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'same-origin',
+            }
             if self.creds:
                 if hasattr(self.creds, 'valid') and not self.creds.valid: 
                     try: self.creds.refresh(requests.Session())
@@ -154,7 +200,7 @@ class ArchivalEngine:
                 final_data = resp.content
         except: pass
 
-        # 2. Token Injection
+        # 2. Token Injection Fallback
         if not final_data and self.creds:
             try:
                 url = self._construct_url(file_id, original_url, is_google_doc=is_google, inject_token=self.creds.token)
@@ -163,12 +209,15 @@ class ArchivalEngine:
                     final_data = resp.content
             except: pass
 
-        # 3. API
+        # 3. API Fallback (Shared Drive Ready)
         if not final_data:
             try:
                 fh = io.BytesIO()
-                if is_google: request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
-                else: request = self.service.files().get_media(fileId=file_id)
+                if is_google: 
+                    request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
+                else: 
+                    request = self.service.files().get_media(fileId=file_id, supportsAllDrives=True)
+                
                 downloader = MediaIoBaseDownload(fh, request)
                 done = False
                 while not done: _, done = downloader.next_chunk()
@@ -176,15 +225,14 @@ class ArchivalEngine:
             except: pass
 
         if not final_data: 
-            # ENHANCED ERROR: Actionable advice for the user
-            raise Exception("Access Denied (Google Lock). FIX: Open this link in your browser and verify you can download it as PDF.")
+            raise Exception(f"Access Denied (Google Lock). FIX: Ensure student shared with {self.identity_label} or set to 'Anyone in CIT can view'.")
 
         # Word to PDF conversion
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
             if final_data.startswith(b'PK\x03\x04') or str(file_name).lower().endswith(('.docx', '.doc')):
                 temp_meta = {'name': f"CONV_{int(time.time())}", 'mimeType': 'application/vnd.google-apps.document'}
                 media = MediaIoBaseUpload(io.BytesIO(final_data), mimetype='application/octet-stream', resumable=True)
-                temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id').execute()
+                temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id', supportsAllDrives=True).execute()
                 t_id = temp_file.get('id')
                 try:
                     time.sleep(5)
@@ -196,7 +244,7 @@ class ArchivalEngine:
                     data = fh.getvalue()
                     if data.startswith(b'%PDF-'): final_data = data
                 finally:
-                    try: self.service.files().delete(fileId=t_id).execute()
+                    try: self.service.files().delete(fileId=t_id, supportsAllDrives=True).execute()
                     except: pass
 
         if is_pdf_target and not final_data.startswith(b'%PDF-'): raise Exception("PDF Conversion Locked by Google")
@@ -226,7 +274,7 @@ class ArchivalEngine:
             link = project_data.get(f'{doc_type}_link')
             results[doc_type]['url'] = link
             
-            # --- GAP-FILLING PERSISTENCE ---
+            # GAP-FILLING
             if not link and last_record:
                 old_path = getattr(last_record, f"{doc_type}_local_path")
                 if old_path:
@@ -253,7 +301,6 @@ class ArchivalEngine:
                 
                 is_modified = True
                 if last_record and not is_google_doc:
-                    # Non-docs: MD5 and Time check
                     vault_hash = getattr(last_record, f"{doc_type}_hash")
                     if drive_md5 and vault_hash and drive_md5 == vault_hash:
                         is_modified = False
@@ -278,18 +325,17 @@ class ArchivalEngine:
                     final_bytes = self.download_file(file_id, temp_path, original_url=link)
                     new_hash = hashlib.sha256(final_bytes).hexdigest()
                     
-                    # --- ZERO-GHOST PROTOCOL: GATE 1 (STRICT HASH MATCH) ---
+                    # ZERO-GHOST PROTOCOL
                     if last_record:
                         old_hash = getattr(last_record, f"{doc_type}_hash")
                         if new_hash == old_hash:
-                            logger.info(f"   [ZERO-GHOST] Hash match for {doc_type.upper()}. Skipping v2.")
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                             results[doc_type]['hash'] = old_hash
                             results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
                             if os.path.exists(temp_path): os.remove(temp_path)
                             continue
 
-                    # --- ZERO-GHOST PROTOCOL: GATE 2 (SMART CONTENT MATCH) ---
+                    # DNA GATEKEEPER
                     new_text = ""
                     if is_google_doc:
                         new_text = self._extract_text_from_pdf(temp_path)
@@ -300,8 +346,7 @@ class ArchivalEngine:
                                     vect = TfidfVectorizer(min_df=1)
                                     tfidf = vect.fit_transform([old_text, new_text])
                                     sim = (tfidf * tfidf.T).toarray()[0,1]
-                                    if sim > 0.998: # Extreme similarity
-                                        logger.info(f"   [AI GUARD] {doc_type.upper()} text is 99.8% identical. Skipping v2.")
+                                    if sim > 0.998:
                                         results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                                         results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                                         results[doc_type]['text'] = old_text
@@ -309,14 +354,12 @@ class ArchivalEngine:
                                         continue
                                 except: pass
                             elif new_text == old_text:
-                                logger.info(f"   [DNA MATCH] {doc_type.upper()} exact text match. Skipping v2.")
                                 results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                                 results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                                 results[doc_type]['text'] = old_text
                                 if os.path.exists(temp_path): os.remove(temp_path)
                                 continue
 
-                    # If we reach here, it is a REAL change
                     results[doc_type]['bin'] = final_bytes
                     results[doc_type]['hash'] = new_hash
                     results[doc_type]['text'] = new_text
