@@ -49,7 +49,7 @@ class ArchivalEngine:
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v11 Initialized (Weather-Proof Mode)")
+        logger.info(f"ArchivalEngine Master v12 Initialized (Vault-First Resilience)")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -64,7 +64,6 @@ class ArchivalEngine:
         return None, False
 
     def _get_file_metadata(self, file_id):
-        """Gets metadata with multiple fields including md5Checksum for Layer 0 Deduplication"""
         try:
             return self.service.files().get(
                 fileId=file_id, 
@@ -103,7 +102,6 @@ class ArchivalEngine:
         return True
 
     def _construct_url(self, file_id, original_url=None, is_google_doc=True, clean=False):
-        """Builds URL with optional institutional parameter stripping for resilience"""
         params = {'format': 'pdf'}
         if not is_google_doc:
             params = {'export': 'download', 'id': file_id, 'confirm': 't'}
@@ -122,79 +120,79 @@ class ArchivalEngine:
         return f"{base_url}?{urlencode(params)}"
 
     def download_file(self, file_id, destination_path, original_url=None):
-        meta = self._get_file_metadata(file_id)
-        mime_type = meta.get('mimeType', '').lower() if meta else 'unknown'
-        file_name = meta.get('name', 'unknown') if meta else 'Document'
-        is_google = 'google-apps' in mime_type or (original_url and 'docs.google.com' in str(original_url))
-        is_pdf_target = destination_path.lower().endswith('.pdf')
-        
-        logger.info(f"[{self.identity_label}] RESILIENT ARCHIVE: {file_name}")
+        try:
+            meta = self._get_file_metadata(file_id)
+            mime_type = meta.get('mimeType', '').lower() if meta else 'unknown'
+            file_name = meta.get('name', 'unknown') if meta else 'Document'
+            is_google = 'google-apps' in mime_type or (original_url and 'docs.google.com' in str(original_url))
+            is_pdf_target = destination_path.lower().endswith('.pdf')
+            
+            logger.info(f"[{self.identity_label}] RESILIENT ARCHIVE: {file_name}")
 
-        # --- ATTEMPT 1: SUPER STEALTH MIRROR (Full Session) ---
-        final_data = None
-        for attempt in range(2): # Retry once with 'Clean' URL if first fails
-            try:
-                url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=(attempt == 1))
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                    'Accept': 'application/pdf,application/octet-stream,*/*',
-                    'Referer': 'https://docs.google.com/',
-                    'Sec-Ch-Ua-Platform': '"Windows"',
-                }
-                if self.creds:
-                    if hasattr(self.creds, 'valid') and not self.creds.valid: 
-                        try: self.creds.refresh(requests.Session())
-                        except: pass
-                    headers['Authorization'] = f'Bearer {self.creds.token}'
-                
-                resp = self.session.get(url, headers=headers, timeout=60, allow_redirects=True)
-                if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=is_pdf_target):
-                    final_data = resp.content
-                    break
-            except: pass
-
-        # --- ATTEMPT 2: OFFICIAL API ---
-        if not final_data:
-            try:
-                fh = io.BytesIO()
-                if is_google: request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
-                else: request = self.service.files().get_media(fileId=file_id)
-                downloader = MediaIoBaseDownload(fh, request)
-                done = False
-                while not done: _, done = downloader.next_chunk()
-                if self.validate_binary(fh.getvalue(), is_pdf=is_pdf_target):
-                     final_data = fh.getvalue()
-            except: pass
-
-        if not final_data:
-            raise Exception("Access Denied (If you can see it in browser, check if you are logged in to the correct account)")
-
-        # Word to PDF conversion
-        if is_pdf_target and not final_data.startswith(b'%PDF-'):
-            if final_data.startswith(b'PK\x03\x04') or str(file_name).lower().endswith(('.docx', '.doc')):
-                logger.info(f"   [CONVERTING] Document to PDF...")
-                temp_meta = {'name': f"CONV_{int(time.time())}", 'mimeType': 'application/vnd.google-apps.document'}
-                media = MediaIoBaseUpload(io.BytesIO(final_data), mimetype='application/octet-stream', resumable=True)
-                temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id').execute()
-                t_id = temp_file.get('id')
+            # --- ATTEMPT 1: STEALTH MIRROR ---
+            final_data = None
+            for attempt in range(2):
                 try:
-                    time.sleep(5)
-                    req = self.service.files().export_media(fileId=t_id, mimeType='application/pdf')
+                    url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=(attempt == 1))
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                        'Accept': 'application/pdf,application/octet-stream,*/*',
+                    }
+                    if self.creds:
+                        if hasattr(self.creds, 'valid') and not self.creds.valid: 
+                            try: self.creds.refresh(requests.Session())
+                            except: pass
+                        headers['Authorization'] = f'Bearer {self.creds.token}'
+                    
+                    resp = self.session.get(url, headers=headers, timeout=60, allow_redirects=True)
+                    if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=is_pdf_target):
+                        final_data = resp.content
+                        break
+                except: pass
+
+            # --- ATTEMPT 2: API ---
+            if not final_data:
+                try:
                     fh = io.BytesIO()
-                    dld = MediaIoBaseDownload(fh, req)
-                    d_done = False
-                    while not d_done: _, d_done = dld.next_chunk()
-                    data = fh.getvalue()
-                    if data.startswith(b'%PDF-'): final_data = data
-                finally:
-                    try: self.service.files().delete(fileId=t_id).execute()
-                    except: pass
+                    if is_google: request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
+                    else: request = self.service.files().get_media(fileId=file_id)
+                    downloader = MediaIoBaseDownload(fh, request)
+                    done = False
+                    while not done: _, done = downloader.next_chunk()
+                    if self.validate_binary(fh.getvalue(), is_pdf=is_pdf_target):
+                         final_data = fh.getvalue()
+                except: pass
 
-        if is_pdf_target and not final_data.startswith(b'%PDF-'):
-            raise Exception("Institutional lock prevents PDF conversion")
+            if not final_data:
+                raise Exception("Access Denied (Locked)")
 
-        with open(destination_path, 'wb') as f: f.write(final_data)
-        return final_data
+            # Conversion
+            if is_pdf_target and not final_data.startswith(b'%PDF-'):
+                if final_data.startswith(b'PK\x03\x04') or str(file_name).lower().endswith(('.docx', '.doc')):
+                    temp_meta = {'name': f"CONV_{int(time.time())}", 'mimeType': 'application/vnd.google-apps.document'}
+                    media = MediaIoBaseUpload(io.BytesIO(final_data), mimetype='application/octet-stream', resumable=True)
+                    temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id').execute()
+                    t_id = temp_file.get('id')
+                    try:
+                        time.sleep(5)
+                        req = self.service.files().export_media(fileId=t_id, mimeType='application/pdf')
+                        fh = io.BytesIO()
+                        dld = MediaIoBaseDownload(fh, req)
+                        d_done = False
+                        while not d_done: _, d_done = dld.next_chunk()
+                        data = fh.getvalue()
+                        if data.startswith(b'%PDF-'): final_data = data
+                    finally:
+                        try: self.service.files().delete(fileId=t_id).execute()
+                        except: pass
+
+            if is_pdf_target and not final_data.startswith(b'%PDF-'):
+                raise Exception("PDF Conversion Locked")
+
+            with open(destination_path, 'wb') as f: f.write(final_data)
+            return final_data
+        except Exception as e:
+            raise e
 
     def archive_project(self, project_data, workbook_name="Archives", batch_id=None, archived_by=None):
         project_id = str(project_data.get('project_id', 'Unknown')).strip().lower()
@@ -214,6 +212,7 @@ class ArchivalEngine:
         results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': b'', 'ts': None, 'text': ''} for dt in doc_types}
         total_changed = 0
         error_msg = ""
+        recovered_from_vault = 0
 
         for doc_type in doc_types:
             link = project_data.get(f'{doc_type}_link')
@@ -222,36 +221,28 @@ class ArchivalEngine:
             
             file_id = raw_id
             metadata = None
-            if is_folder:
-                file_id, metadata = self._resolve_folder(raw_id, target_hint=doc_type.upper())
-            else:
-                metadata = self._get_file_metadata(file_id)
+            if is_folder: file_id, metadata = self._resolve_folder(raw_id, target_hint=doc_type.upper())
+            else: metadata = self._get_file_metadata(file_id)
 
             if not file_id:
                 error_msg += f"{doc_type.upper()}: Not found; "
                 continue
 
             try:
-                # --- LAYER 0: MD5 METADATA DEDUPLICATION (Weather-Proof) ---
-                # This prevents Google from blocking us for "Too many downloads"
+                # Deduplication logic
                 drive_md5 = metadata.get('md5Checksum') if metadata else None
                 results[doc_type]['ts'] = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
                 
                 is_modified = True
                 if last_record:
                     vault_hash = getattr(last_record, f"{doc_type}_hash")
-                    # If Google's fingerprint matches our vault fingerprint, 100% NO CHANGES.
                     if drive_md5 and vault_hash and drive_md5 == vault_hash:
-                        logger.info(f"LAYER 0 DEDUPLICATION: {doc_type.upper()} matches cloud fingerprint.")
                         is_modified = False
                     else:
-                        # Fallback to time check
                         try:
                             drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
                             vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
-                            if (drive_dt - vault_dt).total_seconds() < 60:
-                                is_modified = False
-                                logger.info(f"LAYER 1 DEDUPLICATION: {doc_type.upper()} timestamp up-to-date.")
+                            if (drive_dt - vault_dt).total_seconds() < 60: is_modified = False
                         except: pass
 
                 if not is_modified:
@@ -264,34 +255,45 @@ class ArchivalEngine:
                 os.makedirs(doc_dir, exist_ok=True)
                 temp_path = os.path.join(doc_dir, f"TEMP_{doc_type.upper()}.pdf")
 
-                final_bytes = self.download_file(file_id, temp_path, original_url=link)
-                new_hash = hashlib.sha256(final_bytes).hexdigest()
-                # Store MD5 from Google if available for better future tracking
-                final_hash = drive_md5 if drive_md5 else new_hash
-                
-                if last_record and final_hash == getattr(last_record, f"{doc_type}_hash"):
-                    results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                    results[doc_type]['hash'] = final_hash
-                    results[doc_type]['bin'] = b''
-                    if os.path.exists(temp_path): os.remove(temp_path)
-                    continue
+                try:
+                    final_bytes = self.download_file(file_id, temp_path, original_url=link)
+                    new_hash = drive_md5 if drive_md5 else hashlib.sha256(final_bytes).hexdigest()
+                    
+                    if last_record and new_hash == getattr(last_record, f"{doc_type}_hash"):
+                        results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                        results[doc_type]['hash'] = new_hash
+                        results[doc_type]['bin'] = b''
+                        if os.path.exists(temp_path): os.remove(temp_path)
+                        continue
 
-                results[doc_type]['bin'] = final_bytes
-                results[doc_type]['hash'] = final_hash
-                total_changed += 1
-                results[doc_type]['is_changed'] = True
-                
-                current_rev = last_record.version if last_record else 0
-                final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{current_rev+1}.pdf")
-                os.rename(temp_path, final_path)
-                results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
+                    results[doc_type]['bin'] = final_bytes
+                    results[doc_type]['hash'] = new_hash
+                    total_changed += 1
+                    results[doc_type]['is_changed'] = True
+                    current_rev = last_record.version if last_record else 0
+                    final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{current_rev+1}.pdf")
+                    os.rename(temp_path, final_path)
+                    results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
+                except Exception as e:
+                    # --- VAULT-FIRST RESILIENCE ---
+                    # If download fails but we have an old copy, REUSE IT.
+                    if last_record and getattr(last_record, f"{doc_type}_local_path"):
+                        logger.info(f"   [RESILIENCE] {doc_type.upper()} download failed, REUSING Vault copy.")
+                        results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                        results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
+                        results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
+                        recovered_from_vault += 1
+                    else:
+                        raise e
+
             except Exception as e:
                 error_msg += f"{doc_type.upper()}: {str(e)[:30]}; "
 
-        if total_changed == 0:
+        if total_changed == 0 and recovered_from_vault == 0:
             if last_record: return {'status': 'unchanged', 'version': last_record.version}
             else: return {'status': 'failed', 'error': error_msg.strip()}
 
+        # Even if we recovered from vault, if we have files, it is at least 'partial' success
         status = "partial" if error_msg else "archived"
         current_version = (last_record.version if last_record else 0) + 1
 
@@ -305,7 +307,7 @@ class ArchivalEngine:
                 project_id=project_id, project_title=project_title, academic_year=academic_year,
                 workbook_name=workbook_name, archived_by=archived_by, batch_id=batch_id,
                 status=status, version=current_version, archived_at=datetime.datetime.utcnow(),
-                error_message=error_msg.strip(),
+                error_message=f"{error_msg.strip()} (Resilient Mode)".strip() if recovered_from_vault > 0 else error_msg.strip(),
                 srs_original_url=project_data.get('srs_link'), sdd_original_url=project_data.get('sdd_link'),
                 spmp_original_url=project_data.get('spmp_link'), std_original_url=project_data.get('std_link'),
                 ri_original_url=project_data.get('ri_link'), research_paper_original_url=project_data.get('research_paper_link'),
@@ -335,7 +337,7 @@ class ArchivalEngine:
             db.session.commit()
             return {'status': status, 'version': current_version, 'error': error_msg.strip()}
         except Exception as e:
-            logger.warning(f"DATABASE OVERLOAD for {project_title}. STRIPPING BINARIES...")
+            logger.warning(f"DATABASE OVERLOAD. STRIPPING BINARIES...")
             db.session.rollback()
             try:
                 disk_entry = ArchivalLedger(
