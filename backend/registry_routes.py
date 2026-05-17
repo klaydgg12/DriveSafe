@@ -148,19 +148,29 @@ def get_pending():
         
         for p in projects:
             tracker_key = f"{sheet_id}_{year}_{p['row_index']}"
-            if tracker_key in LIVE_STATUS_TRACKER:
-                p['status'] = LIVE_STATUS_TRACKER[tracker_key]
-
-            # Latest record can be any status (we need the ID for reset/delete)
+            
+            # 1. Fetch latest DB attempt for this team
             last_record = ArchivalLedger.query.filter_by(
                 project_id=p['project_id'],
                 academic_year=year
             ).order_by(ArchivalLedger.id.desc()).first()
-            
+
+            # 2. DEFAULT STATUS: Use DB if matches, otherwise Pending
+            db_status = last_record.status.capitalize() if last_record else 'Pending'
+            if db_status == 'Archived' or db_status == 'Partial':
+                # Detect if student UPDATED the links since we last archived
+                sheet_links = f"{p['srs_link']}{p['sdd_link']}{p['spmp_link']}{p['std_link']}{p['ri_link']}{p['source_code_link']}{p['database_link']}{p['readme_link']}"
+                db_links = f"{last_record.srs_original_url}{last_record.sdd_original_url}{last_record.spmp_original_url}{last_record.std_original_url}{last_record.ri_original_url}{last_record.source_code_original_url}{last_record.database_original_url}{last_record.readme_original_url}"
+                if sheet_links != db_links:
+                    db_status = 'Pending' # Link mismatch -> Student edited their work!
+
+            p['status'] = db_status
+            if tracker_key in LIVE_STATUS_TRACKER:
+                p['status'] = LIVE_STATUS_TRACKER[tracker_key]
+
             p['latest_version'] = last_record.version if last_record and last_record.status in ['archived', 'partial'] else 0
             p['latest_id'] = last_record.id if last_record else None
             
-            # If the dashboard shows FAILED but has no details, try pulling the last error from the DB
             if p['status'].lower() in ['failed', 'partial'] and not p.get('error_message'):
                 if last_record: p['error_message'] = last_record.error_message
             
@@ -348,19 +358,8 @@ def archive_selected():
         
         if not to_process: return
 
-        with app_context.app_context():
-            try:
-                sheets_service, _ = get_services(requested_sheet_id=sid, provided_user_creds=creds)
-                from collections import defaultdict
-                init_updates = defaultdict(list)
-                for p in to_process:
-                    init_updates[p['academic_year']].append({'row_index': p['row_index'], 'status': 'Processing'})
-                for s_name, upds in init_updates.items():
-                    sheets_service.batch_update_statuses(s_name, upds)
-            except Exception as e:
-                logger.error(f"Initial batch status update failed: {e}")
-            finally:
-                db.session.remove()
+        # NO LONGER UPDATING GOOGLE SHEETS
+        # The system is now 100% database-driven for status tracking.
 
         with ThreadPoolExecutor(max_workers=8) as executor:
             def process_single_project(p):
@@ -374,39 +373,15 @@ def archive_selected():
                         status = result['status'].capitalize()
                         if result['status'] == 'unchanged': status = 'Archived'
                         LIVE_STATUS_TRACKER[tracker_key] = status
-                        paths = result.get('paths', {})
-                        return {
-                            'sheet_name': p['academic_year'], 'row_index': p['row_index'], 'status': status,
-                            'kwargs': {
-                                'srs_path': paths.get('srs'), 'sdd_path': paths.get('sdd'), 'spmp_path': paths.get('spmp'),
-                                'std_path': paths.get('std'), 'ri_path': paths.get('ri'), 
-                                'source_code_path': paths.get('source_code'), 'database_path': paths.get('database'), 
-                                'readme_path': paths.get('readme'), 'error_msg': result.get('error')
-                            }
-                        }
+                        return True
                     except Exception as e:
                         logger.error(f"Failed to process {p.get('project_title')}: {e}")
                         LIVE_STATUS_TRACKER[tracker_key] = "Failed"
-                        return { 'sheet_name': p['academic_year'], 'row_index': p['row_index'], 'status': 'Failed', 'kwargs': {'error_msg': str(e)} }
+                        return False
                     finally:
                         db.session.remove()
 
-            results = list(executor.map(process_single_project, to_process))
-            from collections import defaultdict
-            final_updates = defaultdict(list)
-            for res in results:
-                if res: final_updates[res['sheet_name']].append(res)
-            
-            if final_updates:
-                with app_context.app_context():
-                    try:
-                        sheets_service, _ = get_services(requested_sheet_id=sid, provided_user_creds=creds)
-                        for sheet_name, status_updates in final_updates.items():
-                            sheets_service.batch_update_statuses(sheet_name, status_updates)
-                    except Exception as e:
-                        logger.error(f"Final batch update failed: {e}")
-                    finally:
-                        db.session.remove()
+            list(executor.map(process_single_project, to_process))
 
     thread = threading.Thread(target=process_task, args=(app_obj, projects, user_creds, sheet_id, workbook_name, user_email))
     thread.start()
@@ -419,13 +394,22 @@ def reset_project_status():
     project = request.json.get('project')
     if not project: return jsonify({"error": "No project"}), 400
     try:
-        sheets_service, _ = get_services()
-        sheets_service.update_status(
-            project['academic_year'], project['row_index'], 'Pending', 
-            srs_path='', sdd_path='', spmp_path='', std_path='', ri_path='', error_msg=''
-        )
-        return jsonify({"message": "Reset successful"})
-    except Exception as e: return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+        from models import ArchivalLedger, db
+        # RESET logic: Delete the latest record for this project in the DB.
+        # This will naturally revert the dashboard status to 'Pending'.
+        last_record = ArchivalLedger.query.filter_by(
+            project_id=project['project_id'],
+            academic_year=project['academic_year']
+        ).order_by(ArchivalLedger.id.desc()).first()
+        
+        if last_record:
+            db.session.delete(last_record)
+            db.session.commit()
+            
+        return jsonify({"message": "Status reset to Pending (Local only)"})
+    except Exception as e: 
+        db.session.rollback()
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 @registry_bp.route('/ledger/<int:id>', methods=['DELETE', 'OPTIONS'], strict_slashes=False)
 @login_required

@@ -66,10 +66,7 @@ class RegistrySheetsService:
                 'source_code_link': ['5. source code'],
                 'github_link': ['6. source code (github)'],
                 'database_link': ['7. exported / dumped database'],
-                'readme_link': ['8. readme'],
-                'status': ['status'],
-                'last_updated': ['timestamp', 'last updated'],
-                'error': ['error message', 'error']
+                'readme_link': ['8. readme']
             }
             for key, synonyms in keywords.items():
                 for i, header in enumerate(headers):
