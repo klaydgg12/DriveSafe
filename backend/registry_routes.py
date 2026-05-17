@@ -221,15 +221,16 @@ def get_grouped_ledger():
         doc_versions = defaultdict(lambda: defaultdict(int))
         grouped_data = {}
         for r in records:
-            # UNIFY BY PROJECT ID ONLY (The Team Code)
-            # This ensures that even if titles or sheets change, the team stays unified.
+            # UNIFY BY ID + TITLE to keep N/A projects separate
             pid_safe = str(r.project_id).strip().lower()
+            title_safe = str(r.project_title).strip().lower()
+            project_key = f"{pid_safe}_{title_safe}"
             
-            if pid_safe not in grouped_data:
-                grouped_data[pid_safe] = {
+            if project_key not in grouped_data:
+                grouped_data[project_key] = {
                     "project_id": r.project_id, 
-                    "project_title": r.project_title, # Will be updated to latest
-                    "academic_year": r.academic_year, # Will be updated to latest
+                    "project_title": r.project_title,
+                    "academic_year": r.academic_year, 
                     "workbook_name": r.workbook_name,
                     "db_ids": [],
                     "documents": { 
@@ -238,23 +239,19 @@ def get_grouped_ledger():
                     }
                 }
             
-            target = grouped_data[pid_safe]
-            # ALWAYS update to the latest title and sheet info found
-            target["project_title"] = r.project_title
-            target["academic_year"] = r.academic_year
-            target["workbook_name"] = r.workbook_name
+            target = grouped_data[project_key]
             target["db_ids"].append(int(r.id))
 
             for doc_type in ["srs", "sdd", "spmp", "std", "ri", "source_code", "database", "readme"]:
                 path = getattr(r, f"{doc_type}_local_path")
                 current_hash = getattr(r, f"{doc_type}_hash")
                 
-                # ONLY include as a version if it has a physical path in the vault
-                if path:
-                    doc_versions[pid_safe][doc_type] += 1
+                # ONLY count as a revision if the file actually exists in the vault
+                if path and str(path).strip():
+                    doc_versions[project_key][doc_type] += 1
                     target["documents"][doc_type].append({
                         "id": int(r.id),
-                        "version": doc_versions[pid_safe][doc_type],
+                        "version": doc_versions[project_key][doc_type],
                         "hash": current_hash, 
                         "timestamp": r.archived_at.isoformat() + 'Z' if r.archived_at else None,
                         "status": r.status
