@@ -35,13 +35,14 @@ interface Project {
     status: string;
     academic_year: string;
     latest_version?: number;
+    error_message?: string;
 }
 
 interface Workbook { id: string; name: string; }
 
 type SortField = 'project_id' | 'project_title' | 'status';
 type SortOrder = 'asc' | 'desc';
-type StatusFilter = 'All' | 'Pending' | 'Archived' | 'Failed' | 'Processing';
+type StatusFilter = 'All' | 'Failed';
 
 const RegistryDashboard: React.FC = () => {
     const [workbooks, setWorkbooks] = useState<Workbook[]>([]);
@@ -130,7 +131,7 @@ const RegistryDashboard: React.FC = () => {
         try {
             const res = await axios.get(`/api/registry/projects?year=${year}&sheet_id=${workbookId}`, { withCredentials: true });
             
-            // NEW: Handle the object format with available_docs
+            // Handle the object format with available_docs
             if (res.data.projects) {
                 setProjects(res.data.projects);
                 setAvailableDocs(res.data.available_docs || []);
@@ -232,8 +233,9 @@ const RegistryDashboard: React.FC = () => {
             .filter(p => {
                 const matchesSearch = p.project_title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                                      p.project_id.toLowerCase().includes(searchQuery.toLowerCase());
-                const matchesStatus = statusFilter === 'All' || p.status.toLowerCase() === statusFilter.toLowerCase();
-                return matchesSearch && matchesStatus;
+                if (statusFilter === 'All') return matchesSearch;
+                // 'Failed' filter now includes both fully failed and partially archived projects
+                return matchesSearch && (p.status.toLowerCase() === 'failed' || p.status.toLowerCase() === 'partial');
             })
             .sort((a, b) => {
                 const valA = (a[sortField] || '').toString();
@@ -249,18 +251,34 @@ const RegistryDashboard: React.FC = () => {
         return filteredAndSortedProjects.slice(startIndex, startIndex + projectsPerPage);
     }, [filteredAndSortedProjects, currentPage]);
 
-    const getStatusBadge = (status: string, version?: number) => {
+    const getStatusBadge = (status: string, version?: number, errorMsg?: string) => {
         const s = status.toLowerCase();
         let classes = "bg-gray-100 text-gray-600";
         if (s === 'pending') classes = "bg-amber-100 text-amber-700 ring-1 ring-amber-200";
         if (s === 'archived') classes = "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200";
-        if (s === 'failed') classes = "bg-red-100 text-red-700 ring-1 ring-red-200";
+        if (s === 'failed') classes = "bg-red-100 text-red-700 ring-1 ring-red-200 cursor-help";
+        if (s === 'partial') classes = "bg-orange-100 text-orange-700 ring-1 ring-orange-200 cursor-help";
         if (s === 'processing') classes = "bg-indigo-100 text-indigo-700 animate-pulse ring-1 ring-indigo-200";
 
         return (
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${classes}`}>
-                {status} {version && version > 0 ? `v${version}` : ''}
-            </span>
+            <div className="group/badge relative inline-block">
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${classes}`}>
+                    {status} {version && version > 0 ? `v${version}` : ''}
+                </span>
+                {(s === 'failed' || s === 'partial') && errorMsg && (
+                    <div className="absolute right-0 bottom-full mb-2 hidden group-hover/badge:block w-72 p-3 bg-slate-800 text-white text-[10px] font-medium rounded-xl shadow-2xl z-[60] border border-slate-700 text-left">
+                        <div className="flex items-center gap-2 mb-1 text-red-400 font-bold uppercase tracking-tighter">
+                            <AlertCircle size={12} /> {s === 'partial' ? 'Partial Success with Errors' : 'Archival Error'}
+                        </div>
+                        <div className="leading-relaxed whitespace-pre-wrap">
+                            {errorMsg}
+                        </div>
+                        <div className="mt-2 text-slate-400 text-[9px] italic border-t border-slate-700 pt-1">
+                            Tip: Check permissions or use direct PDF links for large files.
+                        </div>
+                    </div>
+                )}
+            </div>
         );
     };
 
@@ -354,11 +372,11 @@ const RegistryDashboard: React.FC = () => {
                         </div>
                         
                         <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-100 shadow-sm">
-                            {(['All', 'Pending', 'Archived', 'Failed'] as StatusFilter[]).map(status => (
+                            {(['All', 'Failed'] as StatusFilter[]).map(status => (
                                 <button
                                     key={status}
                                     onClick={() => {setStatusFilter(status); setCurrentPage(1);}}
-                                    className={`px-3 py-1.5 text-[10px] font-black rounded-lg transition-all ${statusFilter === status ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+                                    className={`px-4 py-1.5 text-[10px] font-black rounded-lg transition-all ${statusFilter === status ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
                                 >
                                     {status.toUpperCase()}
                                 </button>
@@ -515,8 +533,8 @@ const RegistryDashboard: React.FC = () => {
                                             </td>
                                             <td className="px-6 py-4 text-right">
                                                 <div className="flex items-center justify-end gap-3 group/status">
-                                                    {getStatusBadge(p.status, p.latest_version)}
-                                                    {(p.status.toLowerCase() === 'archived' || p.status.toLowerCase() === 'failed') && (
+                                                    {getStatusBadge(p.status, p.latest_version, p.error_message)}
+                                                    {(p.status.toLowerCase() === 'archived' || p.status.toLowerCase() === 'failed' || p.status.toLowerCase() === 'partial') && (
                                                         <button 
                                                             onClick={(e) => { e.stopPropagation(); handleReset(p); }}
                                                             className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all opacity-0 group-hover/status:opacity-100 border border-transparent hover:border-indigo-100 shadow-sm"
