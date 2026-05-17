@@ -1,6 +1,7 @@
 import gspread
 from google.oauth2 import service_account
 import os
+import re
 import json
 import datetime
 import logging
@@ -78,23 +79,27 @@ class RegistrySheetsService:
             return {}
 
         mapping = {}
-        # Define keywords to search for in headers (Using specific phrases to avoid overlap)
+        # Define keywords to search for in headers (Highly robust to match user's custom format)
         keywords = {
-            'project_id': ['team code', 'team id', 'project id', 'id number'],
+            'project_id': ['team id', 'team_id', 'group code', 'team code'],
             'project_title': ['project title', 'title'],
             'student_name': ['student name', 'representative name'],
-            'srs_link': ['1. srs', 'srs link', 'srs file'],
-            'sdd_link': ['3. sdd', 'sdd link', 'sdd file'],
-            'spmp_link': ['2. spmp', 'spmp link', 'spmp file'],
-            'std_link': ['4. std', 'std link', 'std file'],
-            'ri_link': ['requirements inventory', 'ri link', 'ri file'],
-            'source_code_link': ['5. source code', 'source code (zipped)', 'zipped source'],
-            'github_link': ['6. source code (github)', 'github link'],
-            'database_link': ['7. exported / dumped database', 'database link', 'sql dump'],
-            'readme_link': ['8. readme', 'readme link'],
+            'student_id': ['student id', 'id number', 'id'],
+            'timestamp': ['timestamp'],
             'status': ['status'],
-            'last_updated': ['timestamp', 'last updated'],
-            'error': ['error message', 'error']
+            'last_updated': ['last updated'],
+            'error': ['error message', 'error'],
+            
+            # Deliverable columns (Dynamic positioning)
+            'srs_link': ['1. srs', 'srs link'],
+            'spmp_link': ['2. spmp', 'spmp link'],
+            'sdd_link': ['3. sdd', 'sdd link'],
+            'std_link': ['4. std', 'std link'],
+            'ri_link': ['requirements inventory', 'ri link'],
+            'source_code_link': ['5. source code', 'zipped source'],
+            'github_link': ['6. source code (github)', 'github link'],
+            'database_link': ['7. exported / dumped database', 'sql dump'],
+            'readme_link': ['8. readme', 'readme link']
         }
 
         for key, synonyms in keywords.items():
@@ -107,88 +112,100 @@ class RegistrySheetsService:
         return mapping
 
     def get_all_projects(self, sheet_name):
-        """Fetch all rows using dynamic header mapping and filter duplicates by Links primarily"""
+        """Fetch all rows and merge by TEAM ID with granular link conflict detection"""
         try:
             worksheet = self.workbook.worksheet(sheet_name)
             all_records = worksheet.get_all_values()
-            if not all_records: return []
+            if not all_records: return {'projects': [], 'available_docs': []}
 
             col_map = self._get_header_map(worksheet)
             
-            # Dictionary to keep the latest entry for each unique submission
-            unique_projects = {}
+            # Dictionary to keep the latest entry for each Team Code
+            team_groups = {}
             
             for idx, row in enumerate(all_records[1:], start=2):
                 def get_val(key, default=''):
                     if key in col_map and col_map[key] < len(row):
                         val = str(row[col_map[key]]).strip()
-                        # Ignore placeholder instruction text
                         if "copy & paste" in val.lower() or "filename:" in val.lower():
                             return default
                         return val
                     return default
 
-                pid = get_val('project_id')
+                # Identify the Team
+                raw_team_id = get_val('project_id')
+                # Remove spaces and case for perfect merging
+                team_clean = re.sub(r'\s+', '', str(raw_team_id)).lower() if raw_team_id else ""
+                
                 name = get_val('project_title')
-                srs = get_val('srs_link').rstrip('/')
-                sdd = get_val('sdd_link').rstrip('/')
-                spmp = get_val('spmp_link').rstrip('/')
-                std = get_val('std_link').rstrip('/')
-                ri = get_val('ri_link').rstrip('/')
-                src = get_val('source_code_link').rstrip('/')
-                gh = get_val('github_link').rstrip('/')
-                db_link = get_val('database_link').rstrip('/')
-                readme = get_val('readme_link').rstrip('/')
+                
+                # FUNCTION to extract File ID for perfect link matching
+                def clean_link(url):
+                    if not url: return ""
+                    # Remove all parameters (?usp=...) and backslashes
+                    url = url.split('?')[0].replace("\\", "").rstrip('/')
+                    match = re.search(r'/d/([a-zA-Z0-9_-]{25,})', url)
+                    return match.group(1) if match else url
 
-                # --- GHOST ROW FILTER ---
-                # Skip row if it is totally empty (no ID, no Name, and no Links)
-                has_links = any([srs, sdd, spmp, std, ri, src, gh, db_link, readme])
-                if not pid and not name and not has_links:
+                current_ids = {
+                    'srs': clean_link(get_val('srs_link')),
+                    'sdd': clean_link(get_val('sdd_link')),
+                    'spmp': clean_link(get_val('spmp_link')),
+                    'std': clean_link(get_val('std_link')),
+                    'ri': clean_link(get_val('ri_link')),
+                    'source_code': clean_link(get_val('source_code_link')),
+                    'github': get_val('github_link').lower().strip().rstrip('/'),
+                    'database': clean_link(get_val('database_link')),
+                    'readme': clean_link(get_val('readme_link'))
+                }
+
+                has_links = any(current_ids.values())
+                if not team_clean and not name and not has_links:
                     continue
 
-                # --- SMART TITLE FALLBACK ---
-                # If name is empty, use Team Code. If both empty, use Team [ID]
-                display_title = name
-                if not display_title or display_title.lower() == 'untitled':
-                    display_title = pid if pid else f"Team_{idx}"
+                # Merge Key is primarily the TEAM ID
+                merge_key = team_clean if team_clean else f"ROW_{idx}"
 
-                # Create a "Fingerprint" for this row based on normalized links
-                link_fingerprint = f"{srs}|{sdd}|{spmp}|{std}|{ri}|{src}|{gh}|{db_link}|{readme}".lower()
-                
-                # If they didn't provide links yet, fall back to Project ID
-                dedup_key = link_fingerprint if has_links else f"ID_{pid}_{idx}"
-                
+                # Prepare the project object
                 project = {
                     'row_index': idx,
-                    'project_id': pid or "N/A",
-                    'project_title': display_title,
-                    'srs_link': srs,
-                    'sdd_link': sdd,
-                    'spmp_link': spmp,
-                    'std_link': std,
-                    'ri_link': ri,
-                    'source_code_link': src,
-                    'github_link': gh,
-                    'database_link': db_link,
-                    'readme_link': readme,
+                    'project_id': raw_team_id or "N/A",
+                    'project_title': name or raw_team_id or f"Team_{idx}",
+                    'srs_link': get_val('srs_link'),
+                    'sdd_link': get_val('sdd_link'),
+                    'spmp_link': get_val('spmp_link'),
+                    'std_link': get_val('std_link'),
+                    'ri_link': get_val('ri_link'),
+                    'source_code_link': get_val('source_code_link'),
+                    'github_link': get_val('github_link'),
+                    'database_link': get_val('database_link'),
+                    'readme_link': get_val('readme_link'),
                     'status': get_val('status', 'Pending'),
-                    'academic_year': sheet_name
+                    'academic_year': sheet_name,
+                    'conflicting_fields': [],
+                    '_id_map': current_ids
                 }
-                
-                # Always keep the LATEST submission for that fingerprint
-                unique_projects[dedup_key] = project
+
+                if merge_key in team_groups:
+                    # MERGE with conflict detection
+                    existing = team_groups[merge_key]
+                    conflicts = set(existing.get('conflicting_fields', []))
+                    
+                    doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'github', 'database', 'readme']
+                    for dt in doc_types:
+                        if current_ids[dt] and existing['_id_map'][dt] and current_ids[dt] != existing['_id_map'][dt]:
+                            conflicts.add(dt)
+                    
+                    project['conflicting_fields'] = list(conflicts)
+                    team_groups[merge_key] = project
+                else:
+                    team_groups[merge_key] = project
                 
             # Convert dictionary back to a sorted list based on original row order
-            projects_list = sorted(unique_projects.values(), key=lambda x: x['row_index'])
-            
-            # Return both projects AND which columns actually exist in the sheet
-            # This allows for a Dynamic Dashboard that only shows what's in the sheet.
+            projects_list = sorted(team_groups.values(), key=lambda x: x['row_index'])
             available_columns = [key.replace('_link', '') for key in col_map.keys() if '_link' in key]
             
-            return {
-                'projects': projects_list,
-                'available_docs': available_columns
-            }
+            return {'projects': projects_list, 'available_docs': available_columns}
         except Exception as e:
             logger.error(f"Error fetching projects: {e}")
             raise e
