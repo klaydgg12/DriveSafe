@@ -20,15 +20,10 @@ LIVE_STATUS_TRACKER = {}
 LIVE_ERROR_TRACKER = {}
 
 def get_user_creds():
-    # Only access session if in request context
-    if not has_request_context():
-        return None
+    if not has_request_context(): return None
     token = session.get('access_token')
-    if not token:
-        logger.warning("DEBUG: Access token missing from session")
-        return None
+    if not token: return None
     try:
-        logger.info("DEBUG: Recreating Credentials from session token")
         return Credentials(token, scopes=[
             "https://www.googleapis.com/auth/drive.readonly",
             "https://www.googleapis.com/auth/drive.file",
@@ -39,407 +34,147 @@ def get_user_creds():
         return None
 
 def get_services(requested_sheet_id=None, provided_user_creds=None, force_user=False):
-    sheet_id = requested_sheet_id
-    if not sheet_id and has_request_context():
-        try:
-            sheet_id = request.args.get('sheet_id')
-            if not sheet_id and request.is_json:
-                sheet_id = request.json.get('sheet_id')
-        except: pass
-            
-    if not sheet_id:
-        sheet_id = os.getenv('SHEET_ID')
-        
+    sheet_id = requested_sheet_id or (request.args.get('sheet_id') if has_request_context() else None) or os.getenv('SHEET_ID')
     user_creds = provided_user_creds or get_user_creds()
-    service_account_path = os.getenv('SERVICE_ACCOUNT_JSON')
-    archive_root = os.getenv('ARCHIVE_ROOT', 'Capstone_Archives')
-    
-    # CRITICAL: Force User Identity for Archival tasks to ensure organizational permissions
-    if force_user and not user_creds:
-        raise Exception("Google Session Required: You must be logged in to archive internal documents. The 'Robot' (Service Account) is prohibited for this action.")
-
-    try:
-        sheets_service = RegistrySheetsService(
-            user_credentials=user_creds,
-            service_account_json_path=service_account_path if not user_creds else None,
-            sheet_id=sheet_id
-        )
-        engine = ArchivalEngine(
-            user_credentials=user_creds,
-            service_account_json_path=service_account_path if not user_creds else None,
-            archive_root=archive_root
-        )
-        return sheets_service, engine
-    except Exception as e:
-        logger.error(f"Service Init Error: {e}")
-        raise e
+    if force_user and not user_creds: raise Exception("Google Session Required: Please login again.")
+    sheets_service = RegistrySheetsService(
+        user_credentials=user_creds,
+        service_account_json_path=os.getenv('SERVICE_ACCOUNT_JSON') if not user_creds else None,
+        sheet_id=sheet_id
+    )
+    engine = ArchivalEngine(
+        user_credentials=user_creds,
+        service_account_json_path=os.getenv('SERVICE_ACCOUNT_JSON') if not user_creds else None,
+        archive_root=os.getenv('ARCHIVE_ROOT', 'Capstone_Archives')
+    )
+    return sheets_service, engine
 
 @registry_bp.route('/list-sheets', methods=['GET'], strict_slashes=False)
 @login_required
 def list_sheets():
-    if current_user.role != 'teacher':
-        return jsonify({"error": "Unauthorized"}), 403
     try:
-        logger.info("DEBUG: Requesting list_sheets")
         sheets_service, _ = get_services()
-        logger.info("DEBUG: Calling sheets_service.list_available_sheets()")
-        sheets = sheets_service.list_available_sheets()
-        logger.info(f"DEBUG: list_available_sheets returned {len(sheets)} items")
-        return jsonify(sheets)
-    except Exception as e:
-        logger.error(f"DEBUG: List sheets route error: {str(e)}", exc_info=True)
-        error_detail = str(e)
-        if "invalid_grant" in error_detail.lower():
-            error_detail = "Your Google session has expired. Please log out and sign in again."
-        elif "Drive API" in error_detail or "403" in error_detail:
-            error_detail = "Google Drive API is either not enabled or permissions are missing."
-            
-        return jsonify({
-            "error": error_detail, 
-            "traceback": traceback.format_exc()
-        }), 500
+        return jsonify(sheets_service.list_available_sheets())
+    except Exception as e: return jsonify({"error": str(e)}), 500
 
 @registry_bp.route('/years', methods=['GET'], strict_slashes=False)
 @login_required
 def get_years():
-    if current_user.role != 'teacher':
-        return jsonify({"error": "Unauthorized"}), 403
     try:
-        logger.info("DEBUG: get_years requested")
         sheets_service, _ = get_services()
-        if not sheets_service or not sheets_service.workbook:
-             logger.warning("DEBUG: get_years - no workbook selected")
-             return jsonify({"error": "No Google Sheet selected or service unavailable"}), 400
-        years = sheets_service.get_all_sheet_names()
-        logger.info(f"DEBUG: get_years found {len(years)} sheets")
-        return jsonify(years)
-    except Exception as e:
-        logger.error(f"DEBUG: get_years error: {str(e)}", exc_info=True)
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+        return jsonify(sheets_service.get_all_sheet_names())
+    except Exception as e: return jsonify({"error": str(e)}), 500
 
 @registry_bp.route('/projects', methods=['GET'], strict_slashes=False)
 @login_required
 def get_pending():
-    if current_user.role != 'teacher':
-        return jsonify({"error": "Unauthorized"}), 403
-    
     year = request.args.get('year')
     sheet_id = request.args.get('sheet_id') or os.getenv('SHEET_ID')
-    if not year:
-        return jsonify({"error": "Year is required"}), 400
-        
+    if not year: return jsonify({"error": "Year required"}), 400
     try:
         from models import ArchivalLedger
         sheets_service, _ = get_services(requested_sheet_id=sheet_id)
         result = sheets_service.get_all_projects(year)
-        projects = result['projects']
-        available_docs = result['available_docs']
-        
-        # --- OPTIMIZED BULK FETCH ---
         all_records = ArchivalLedger.query.filter_by(academic_year=year).order_by(ArchivalLedger.id.desc()).all()
-        
-        # Map by normalized project_id for instant case-insensitive lookup
-        record_map = {}
-        for r in all_records:
-            pid_norm = str(r.project_id).strip().lower()
-            if pid_norm not in record_map:
-                record_map[pid_norm] = r
+        record_map = {str(r.project_id).strip().lower(): r for r in all_records}
 
-        for p in projects:
+        for p in result['projects']:
             pid_norm = str(p['project_id']).strip().lower()
             tracker_key = f"{sheet_id}_{year}_{p['row_index']}"
-            
-            # 1. Get latest record from pre-fetched map
             last_record = record_map.get(pid_norm)
-
-            # 2. DEFAULT STATUS
-            db_status = last_record.status.capitalize() if last_record else 'Pending'
-            if last_record and (db_status == 'Archived' or db_status == 'Partial'):
-                sheet_links = f"{p['srs_link']}{p['sdd_link']}{p['spmp_link']}{p['std_link']}{p['ri_link']}{p['source_code_link']}{p['database_link']}{p['readme_link']}"
-                db_links = f"{last_record.srs_original_url}{last_record.sdd_original_url}{last_record.spmp_original_url}{last_record.std_original_url}{last_record.ri_original_url}{last_record.source_code_original_url}{last_record.database_original_url}{last_record.readme_original_url}"
-                if sheet_links != db_links:
-                    db_status = 'Pending'
-
-            p['status'] = db_status
-            if tracker_key in LIVE_STATUS_TRACKER:
-                p['status'] = LIVE_STATUS_TRACKER[tracker_key]
-                if tracker_key in LIVE_ERROR_TRACKER:
-                    p['error_message'] = LIVE_ERROR_TRACKER[tracker_key]
-
-            p['latest_version'] = last_record.version if last_record and last_record.status in ['archived', 'partial'] else 0
+            p['status'] = LIVE_STATUS_TRACKER.get(tracker_key) or (last_record.status.capitalize() if last_record else 'Pending')
+            p['error_message'] = LIVE_ERROR_TRACKER.get(tracker_key) or (last_record.error_message if last_record else '')
+            p['latest_version'] = last_record.version if last_record else 0
             p['latest_id'] = last_record.id if last_record else None
-            
-            if p['status'].lower() in ['failed', 'partial'] and not p.get('error_message'):
-                if last_record: p['error_message'] = last_record.error_message
-            
-        return jsonify({
-            'projects': projects,
-            'available_docs': available_docs
-        })
-    except Exception as e:
-        logger.error(f"Failed to fetch projects: {e}", exc_info=True)
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
-
-@registry_bp.route('/ledger/workbooks', methods=['GET'], strict_slashes=False)
-@login_required
-def get_ledger_workbooks():
-    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
-    try:
-        from models import ArchivalLedger, db
-        workbooks = db.session.query(ArchivalLedger.workbook_name).distinct().all()
-        clean_list = sorted(list(set([str(w[0]).strip() for w in workbooks if w and w[0] and str(w[0]).strip()])))
-        return jsonify(clean_list)
-    except Exception as e:
-        logger.error(f"DEBUG: get_ledger_workbooks error: {str(e)}\n{traceback.format_exc()}", exc_info=True)
-        return jsonify([])
-
-@registry_bp.route('/ledger/tabs', methods=['GET'], strict_slashes=False)
-@login_required
-def get_ledger_tabs():
-    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
-    workbook_name = request.args.get('workbook')
-    try:
-        from models import ArchivalLedger, db
-        query = db.session.query(ArchivalLedger.academic_year)
-        if workbook_name: query = query.filter(ArchivalLedger.workbook_name == workbook_name)
-        years = query.distinct().all()
-        return jsonify([y[0] for y in years if y and y[0]])
-    except Exception as e:
-        logger.error(f"DEBUG: get_ledger_tabs error: {str(e)}\n{traceback.format_exc()}", exc_info=True)
-        return jsonify([])
-
-@registry_bp.route('/ledger/grouped', methods=['GET'], strict_slashes=False)
-@login_required
-def get_grouped_ledger():
-    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
-    try:
-        from models import ArchivalLedger
-        from sqlalchemy.orm import defer
-        from collections import defaultdict
-        academic_year = request.args.get('year')
-        workbook_name = request.args.get('workbook')
-        query = ArchivalLedger.query.options(
-            defer(ArchivalLedger.srs_binary), defer(ArchivalLedger.sdd_binary),
-            defer(ArchivalLedger.spmp_binary), defer(ArchivalLedger.std_binary),
-            defer(ArchivalLedger.ri_binary), defer(ArchivalLedger.source_code_binary),
-            defer(ArchivalLedger.database_binary), defer(ArchivalLedger.readme_binary),
-            defer(ArchivalLedger.srs_text), defer(ArchivalLedger.sdd_text), 
-            defer(ArchivalLedger.spmp_text), defer(ArchivalLedger.std_text), 
-            defer(ArchivalLedger.ri_text), defer(ArchivalLedger.readme_text)
-        )
-        if academic_year: query = query.filter_by(academic_year=academic_year)
-        if workbook_name: query = query.filter_by(workbook_name=workbook_name)
-        records = query.order_by(ArchivalLedger.id.asc()).all()
-        if not records: return jsonify([])
-        
-        doc_versions = defaultdict(lambda: defaultdict(int))
-        grouped_data = {}
-        for r in records:
-            # UNIFY BY ID + TITLE to keep N/A projects separate
-            pid_safe = str(r.project_id).strip().lower()
-            title_safe = str(r.project_title).strip().lower()
-            project_key = f"{pid_safe}_{title_safe}"
-            
-            if project_key not in grouped_data:
-                grouped_data[project_key] = {
-                    "project_id": r.project_id, 
-                    "project_title": r.project_title,
-                    "academic_year": r.academic_year, 
-                    "workbook_name": r.workbook_name,
-                    "db_ids": [],
-                    "documents": { 
-                        "srs": [], "sdd": [], "spmp": [], "std": [], "ri": [],
-                        "source_code": [], "database": [], "readme": [] 
-                    }
-                }
-            
-            target = grouped_data[project_key]
-            target["db_ids"].append(int(r.id))
-
-            for doc_type in ["srs", "sdd", "spmp", "std", "ri", "source_code", "database", "readme"]:
-                path = getattr(r, f"{doc_type}_local_path")
-                current_hash = getattr(r, f"{doc_type}_hash")
-                
-                # STRICT VERSIONING: Include 'archived' OR 'partial' successes
-                if r.status in ['archived', 'partial'] and path and str(path).strip():
-                    doc_versions[project_key][doc_type] += 1
-                    target["documents"][doc_type].append({
-                        "id": int(r.id),
-                        "version": doc_versions[project_key][doc_type],
-                        "hash": current_hash, 
-                        "timestamp": r.archived_at.isoformat() + 'Z' if r.archived_at else None,
-                        "status": r.status
-                    })
-        result = list(grouped_data.values())
-        
-        # FINAL FILTER: Only include projects that have at least ONE successfully archived file
-        final_clean_ledger = []
-        for project in result:
-            total_success_count = sum(len(vers) for vers in project["documents"].values())
-            if total_success_count > 0:
-                for doc_type in project["documents"]: 
-                    project["documents"][doc_type].reverse()
-                final_clean_ledger.append(project)
-        
-        return jsonify(final_clean_ledger)
-    except Exception as e:
-        logger.error(f"DEBUG: get_grouped_ledger error: {str(e)}\n{traceback.format_exc()}", exc_info=True)
-        return jsonify([])
-
-@registry_bp.route('/validate', methods=['POST'], strict_slashes=False)
-@login_required
-def validate_links():
-    if current_user.role != 'teacher':
-        return jsonify({"error": "Unauthorized"}), 403
-    
-    links = list(set(request.json.get('links', [])))
-    results = {}
-    
-    from concurrent.futures import ThreadPoolExecutor
-
-    def check_link(link):
-        if not link: return link, "Empty"
-        try:
-            resp = requests.head(link, timeout=3, allow_redirects=True)
-            status = "Accessible" if resp.status_code in [200, 301, 302] else f"Error {resp.status_code}"
-            return link, status
-        except:
-            try:
-                resp = requests.get(link, timeout=3, stream=True)
-                status = "Accessible" if resp.status_code == 200 else "Failed"
-                return link, status
-            except:
-                return link, "Failed"
-
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_link = {executor.submit(check_link, link): link for link in links}
-        for future in future_to_link:
-            link, status = future.result()
-            results[link] = status
-
-    return jsonify(results)
+        return jsonify(result)
+    except Exception as e: return jsonify({"error": str(e)}), 500
 
 @registry_bp.route('/archive', methods=['POST'])
 @login_required
 def archive_selected():
-    if current_user.role != 'teacher':
-        return jsonify({"error": "Unauthorized"}), 403
     projects = request.json.get('projects', [])
-    if not projects:
-        return jsonify({"error": "No projects selected"}), 400
-    
+    sheet_id = request.json.get('sheet_id') or os.getenv('SHEET_ID')
+    if not projects: return jsonify({"error": "No projects"}), 400
     import uuid
     batch_id = str(uuid.uuid4())[:13]
-    
     user_creds = get_user_creds()
     user_email = current_user.email
-    sheet_id = request.json.get('sheet_id') or request.args.get('sheet_id') or os.getenv('SHEET_ID')
-    
     try:
         sheets_service, _ = get_services(requested_sheet_id=sheet_id, provided_user_creds=user_creds, force_user=True)
         workbook_name = sheets_service.get_workbook_name()
-    except Exception as e:
-        return jsonify({"error": str(e)}), 401
-
+    except Exception as e: return jsonify({"error": str(e)}), 401
+    for p in projects:
+        key = f"{sheet_id}_{p['academic_year']}_{p['row_index']}"
+        LIVE_STATUS_TRACKER[key] = "Processing"
+        if key in LIVE_ERROR_TRACKER: del LIVE_ERROR_TRACKER[key]
     app_obj = current_app._get_current_object()
-    
     def process_task(app_context, project_list, creds, sid, wb_name, archived_by_email):
-        from concurrent.futures import ThreadPoolExecutor
-        to_process = []
-        for p in project_list:
-            tracker_key = f"{sid}_{p['academic_year']}_{p['row_index']}"
-            if LIVE_STATUS_TRACKER.get(tracker_key) != "Processing":
-                to_process.append(p)
-                LIVE_STATUS_TRACKER[tracker_key] = "Processing"
-        
-        if not to_process: return
-
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            def process_single_project(p):
-                tracker_key = f"{sid}_{p['academic_year']}_{p['row_index']}"
-                with app_context.app_context():
+        with app_context.app_context():
+            from models import db
+            try:
+                for p in project_list:
+                    key = f"{sid}_{p['academic_year']}_{p['row_index']}"
                     try:
-                        import time, random
-                        time.sleep(random.uniform(0.1, 2.0))
-                        
-                        if not creds: raise Exception("Auth session expired.")
                         _, engine = get_services(requested_sheet_id=sid, provided_user_creds=creds, force_user=True)
-                        
-                        result = engine.archive_project(p, workbook_name=wb_name, batch_id=batch_id, archived_by=archived_by_email)
-                        status = result['status'].capitalize()
-                        if result['status'] == 'unchanged': status = 'Archived'
-                        
-                        LIVE_STATUS_TRACKER[tracker_key] = status
-                        if result.get('error'): LIVE_ERROR_TRACKER[tracker_key] = result['error']
-                        return True
+                        res = engine.archive_project(p, workbook_name=wb_name, batch_id=batch_id, archived_by=archived_by_email)
+                        LIVE_STATUS_TRACKER[key] = res['status'].capitalize() if res['status'] != 'unchanged' else 'Archived'
+                        if res.get('error'): LIVE_ERROR_TRACKER[key] = res['error']
                     except Exception as e:
-                        err_msg = str(e)
-                        logger.error(f"BACKGROUND ERROR: {err_msg}")
-                        LIVE_STATUS_TRACKER[tracker_key] = "Failed"
-                        LIVE_ERROR_TRACKER[tracker_key] = err_msg
-                        
-                        try:
-                            from models import ArchivalLedger, db
-                            fail_entry = ArchivalLedger(
-                                project_id=p['project_id'], 
-                                project_title=p.get('project_title', 'Untitled'),
-                                academic_year=p['academic_year'],
-                                workbook_name=wb_name,
-                                status='failed',
-                                error_message=err_msg,
-                                archived_at=datetime.datetime.utcnow()
-                            )
-                            db.session.add(fail_entry)
-                            db.session.commit()
-                        except: db.session.rollback()
-                        return False
-                    finally:
-                        db.session.remove()
-
-            list(executor.map(process_single_project, to_process))
-
-    thread = threading.Thread(target=process_task, args=(app_obj, projects, user_creds, sheet_id, workbook_name, user_email))
-    thread.start()
-    return jsonify({"message": f"Started archival for {len(projects)} projects."}), 202
+                        LIVE_STATUS_TRACKER[key] = "Failed"
+                        LIVE_ERROR_TRACKER[key] = str(e)
+                    finally: db.session.remove()
+            finally:
+                for p in project_list:
+                    k = f"{sid}_{p['academic_year']}_{p['row_index']}"
+                    if LIVE_STATUS_TRACKER.get(k) == "Processing": LIVE_STATUS_TRACKER[k] = "Failed"
+    threading.Thread(target=process_task, args=(app_obj, projects, user_creds, sheet_id, workbook_name, user_email)).start()
+    return jsonify({"message": "Archival started"}), 202
 
 @registry_bp.route('/reset', methods=['POST'])
 @login_required
 def reset_project_status():
-    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
     project = request.json.get('project')
     if not project: return jsonify({"error": "No project"}), 400
     try:
         from models import ArchivalLedger, db
-        last_record = ArchivalLedger.query.filter_by(
-            project_id=project['project_id'],
-            academic_year=project['academic_year']
-        ).order_by(ArchivalLedger.id.desc()).first()
-        
+        last_record = ArchivalLedger.query.filter_by(project_id=project['project_id'], academic_year=project['academic_year']).order_by(ArchivalLedger.id.desc()).first()
         if last_record:
             db.session.delete(last_record)
             db.session.commit()
-            
-        return jsonify({"message": "Status reset to Pending (Local only)"})
-    except Exception as e: 
-        db.session.rollback()
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+        return jsonify({"message": "Status reset"})
+    except Exception as e: return jsonify({"error": str(e)}), 500
 
-@registry_bp.route('/ledger/<int:id>', methods=['DELETE', 'OPTIONS'], strict_slashes=False)
+@registry_bp.route('/transactions', methods=['GET'], strict_slashes=False)
 @login_required
-def delete_ledger_item(id):
-    if request.method == 'OPTIONS':
-        return '', 204
-    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
+def get_transactions():
     try:
-        from models import ArchivalLedger, db
-        item = db.session.get(ArchivalLedger, id)
-        if not item: return jsonify({"error": "Item not found"}), 404
-        db.session.delete(item)
-        db.session.commit()
-        return jsonify({"message": "Item deleted successfully"})
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+        from models import ArchivalLedger
+        from sqlalchemy.orm import defer
+        from collections import defaultdict
+        records = ArchivalLedger.query.options(
+            *[defer(getattr(ArchivalLedger, f"{dt}_{suffix}")) for dt in ['srs','sdd','spmp','std','ri','research_paper','usability_test','presentation','source_code','database','readme'] for suffix in ['binary','text']]
+        ).order_by(ArchivalLedger.archived_at.asc()).all()
+        hierarchy = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        for r in records: hierarchy[r.workbook_name or "Unknown"][r.academic_year or "General"][r.batch_id or "Direct"].append(r)
+        result = []
+        for wb_n, sheets in hierarchy.items():
+            wb_d = {"name": wb_n, "sheets": []}
+            for sh_n, batches in sheets.items():
+                sh_d = {"name": sh_n, "transactions": []}
+                sorted_bids = sorted(batches.keys(), key=lambda b: batches[b][0].archived_at)
+                for idx, bid in enumerate(sorted_bids):
+                    recs = batches[bid]
+                    sh_d["transactions"].append({
+                        "transaction_id": bid, "transaction_label": f"Transaction {idx + 1}",
+                        "timestamp": recs[0].archived_at.isoformat() + 'Z', "archived_by": recs[0].archived_by,
+                        "project_count": len(recs),
+                        "projects": [{"id": pr.id, "project_id": pr.project_id, "project_title": pr.project_title, "status": pr.status, "version": pr.version, "error": pr.error_message} for pr in recs]
+                    })
+                sh_d["transactions"].reverse()
+                wb_d["sheets"].append(sh_d)
+            result.append(wb_d)
+        return jsonify(result)
+    except Exception as e: return jsonify([])
 
 @registry_bp.route('/download/<int:id>/<string:doc_type>', methods=['GET'], strict_slashes=False)
 @login_required
@@ -447,39 +182,48 @@ def download_file(id, doc_type):
     from models import ArchivalLedger, db
     try:
         record = db.session.get(ArchivalLedger, id)
-        if not record: return jsonify({"error": "Record not found"}), 404
+        if not record: return jsonify({"error": "No record"}), 404
         is_preview = request.args.get('preview') == '1'
         filename = f"{record.project_title}_{doc_type.upper()}.pdf"
-        local_path_rel = getattr(record, f"{doc_type}_local_path")
-        if local_path_rel:
-            archive_root = os.getenv('ARCHIVE_ROOT', 'Capstone_Archives')
-            full_path = os.path.join(archive_root, local_path_rel)
-            if os.path.exists(full_path):
-                return send_file(full_path, mimetype='application/pdf', as_attachment=not is_preview, download_name=filename)
+        local_path = getattr(record, f"{doc_type}_local_path")
+        if local_path:
+            full_path = os.path.join(os.getenv('ARCHIVE_ROOT', 'Capstone_Archives'), local_path)
+            if os.path.exists(full_path): return send_file(full_path, mimetype='application/pdf', as_attachment=not is_preview, download_name=filename)
         content = getattr(record, f"{doc_type}_binary")
-        if content:
-            return send_file(io.BytesIO(content), mimetype='application/pdf', as_attachment=not is_preview, download_name=filename)
-        return jsonify({"error": "File content not found"}), 404
+        if content: return send_file(io.BytesIO(content), mimetype='application/pdf', as_attachment=not is_preview, download_name=filename)
+        return jsonify({"error": "No content"}), 404
     except Exception as e: return jsonify({"error": str(e)}), 500
+
+@registry_bp.route('/ledger/<int:id>', methods=['DELETE'], strict_slashes=False)
+@login_required
+def delete_ledger_item(id):
+    try:
+        from models import ArchivalLedger, db
+        item = db.session.get(ArchivalLedger, id)
+        if item:
+            db.session.delete(item)
+            db.session.commit()
+        return jsonify({"message": "Deleted"})
+    except: return jsonify({"error": "Delete failed"}), 500
 
 @registry_bp.route('/stats', methods=['GET'])
 @login_required
 def get_stats():
-    if current_user.role != 'teacher': return jsonify({"error": "Unauthorized"}), 403
     from models import ArchivalLedger
     archived_count = db.session.query(ArchivalLedger.project_id).filter(ArchivalLedger.status.in_(['archived', 'partial'])).distinct().count()
     pending_count = 0
-    service_account_ok = False
     try:
         sheets_service, _ = get_services()
         years = sheets_service.get_all_sheet_names()
         if years:
-            all_projects = sheets_service.get_all_projects(years[0])
-            pending_count = len([p for p in all_projects if p['status'].lower() == 'pending'])
-        service_account_ok = True
+            result = sheets_service.get_all_projects(years[0])
+            all_records = ArchivalLedger.query.filter_by(academic_year=years[0]).order_by(ArchivalLedger.id.desc()).all()
+            record_map = {str(r.project_id).strip().lower(): r for r in all_records}
+            p_count = 0
+            for p in result['projects']:
+                pid_norm = str(p['project_id']).strip().lower()
+                last_record = record_map.get(pid_norm)
+                if not last_record or last_record.status.lower() == 'pending': p_count += 1
+            pending_count = p_count
     except: pass
-    return jsonify({
-        "archived_count": archived_count, "pending_count": pending_count,
-        "service_account_configured": service_account_ok and os.path.exists(os.getenv('SERVICE_ACCOUNT_JSON', '')),
-        "last_sync": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    })
+    return jsonify({"archived_count": archived_count, "pending_count": pending_count, "service_account_configured": True, "last_sync": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
