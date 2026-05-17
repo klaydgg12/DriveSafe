@@ -49,7 +49,7 @@ class ArchivalEngine:
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v16 Initialized (Gap-Filling Mode)")
+        logger.info(f"ArchivalEngine Master v17 Initialized (Hyper-Sensitive DNA)")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -65,10 +65,7 @@ class ArchivalEngine:
 
     def _get_file_metadata(self, file_id):
         try:
-            return self.service.files().get(
-                fileId=file_id, 
-                fields='modifiedTime, md5Checksum, name, mimeType, size'
-            ).execute()
+            return self.service.files().get(fileId=file_id, fields='modifiedTime, md5Checksum, name, mimeType, size').execute()
         except: return None
 
     def _resolve_folder(self, folder_id, target_hint=None):
@@ -93,10 +90,12 @@ class ArchivalEngine:
             return None, None
 
     def _extract_text_from_pdf(self, file_path):
+        """High-depth text extraction to ensure every edit is detected"""
         try:
             text = ""
             with pdfplumber.open(file_path) as pdf:
-                for page in pdf.pages[:20]: 
+                # Scan up to 100 pages for maximum sensitivity
+                for page in pdf.pages[:100]: 
                     text += (page.extract_text() or "")
             return text
         except: return ""
@@ -117,9 +116,7 @@ class ArchivalEngine:
             base_url = "https://drive.google.com/uc"
         else:
             base_url = f"https://docs.google.com/document/d/{file_id}/export"
-
         if inject_token: params['access_token'] = inject_token
-
         if original_url and '?' in str(original_url):
             try:
                 parsed = urlparse(str(original_url))
@@ -127,7 +124,6 @@ class ArchivalEngine:
                 for key in ['ouid', 'rtpof', 'authuser', 'usp']:
                     if key in query: params[key] = query[key][0]
             except: pass
-            
         return f"{base_url}?{urlencode(params)}"
 
     def download_file(self, file_id, destination_path, original_url=None):
@@ -138,9 +134,8 @@ class ArchivalEngine:
         is_pdf_target = destination_path.lower().endswith('.pdf')
         
         logger.info(f"[{self.identity_label}] DOWNLOADING: {file_name}")
-
         final_data = None
-        # Attempt 1: Stealth Mirror
+        
         try:
             url = self._construct_url(file_id, original_url, is_google_doc=is_google)
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'}
@@ -154,7 +149,6 @@ class ArchivalEngine:
                 final_data = resp.content
         except: pass
 
-        # Attempt 2: Token Injection
         if not final_data and self.creds:
             try:
                 url = self._construct_url(file_id, original_url, is_google_doc=is_google, inject_token=self.creds.token)
@@ -163,7 +157,6 @@ class ArchivalEngine:
                     final_data = resp.content
             except: pass
 
-        # Attempt 3: API
         if not final_data:
             try:
                 fh = io.BytesIO()
@@ -172,13 +165,11 @@ class ArchivalEngine:
                 downloader = MediaIoBaseDownload(fh, request)
                 done = False
                 while not done: _, done = downloader.next_chunk()
-                if self.validate_binary(fh.getvalue(), is_pdf=is_pdf_target):
-                     final_data = fh.getvalue()
+                if self.validate_binary(fh.getvalue(), is_pdf=is_pdf_target): final_data = fh.getvalue()
             except: pass
 
         if not final_data: raise Exception("Access Denied (Google Lock)")
 
-        # Word to PDF conversion
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
             if final_data.startswith(b'PK\x03\x04') or str(file_name).lower().endswith(('.docx', '.doc')):
                 temp_meta = {'name': f"CONV_{int(time.time())}", 'mimeType': 'application/vnd.google-apps.document'}
@@ -199,7 +190,6 @@ class ArchivalEngine:
                     except: pass
 
         if is_pdf_target and not final_data.startswith(b'%PDF-'): raise Exception("PDF Conversion Locked")
-
         with open(destination_path, 'wb') as f: f.write(final_data)
         return final_data
 
@@ -212,7 +202,6 @@ class ArchivalEngine:
         base_project_dir = os.path.join(self.archive_root, workbook_name, academic_year, batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}")
         os.makedirs(base_project_dir, exist_ok=True)
         
-        # --- GLOBAL PROJECT HISTORY (Ignore Sheet Name here to find existing records) ---
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id, academic_year=academic_year
         ).order_by(ArchivalLedger.version.desc()).first()
@@ -227,12 +216,9 @@ class ArchivalEngine:
             link = project_data.get(f'{doc_type}_link')
             results[doc_type]['url'] = link
             
-            # --- GAP-FILLING PERSISTENCE ---
-            # If the current sheet doesn't have this link, check if we have it from a previous archive
             if not link and last_record:
                 old_path = getattr(last_record, f"{doc_type}_local_path")
                 if old_path:
-                    logger.info(f"   [INHERITING] {doc_type.upper()} inherited from previous sheet version.")
                     results[doc_type]['path'] = old_path
                     results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                     results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
@@ -240,7 +226,6 @@ class ArchivalEngine:
                     continue
             
             if not link: continue
-            
             raw_id, is_folder = self._extract_file_id(link)
             if not raw_id: continue
             
@@ -248,28 +233,25 @@ class ArchivalEngine:
             metadata = None
             if is_folder: file_id, metadata = self._resolve_folder(raw_id, target_hint=doc_type.upper())
             else: metadata = self._get_file_metadata(file_id)
-
-            if not file_id:
-                error_msg += f"{doc_type.upper()}: Not found; "
-                continue
+            if not file_id: continue
 
             try:
                 drive_md5 = metadata.get('md5Checksum') if metadata else None
                 results[doc_type]['ts'] = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
+                is_google_doc = doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'readme']
                 
+                # --- HYPER-SENSITIVITY: BYPASS SKIP FOR GOOGLE DOCS ---
+                # We always download Google Docs to check DNA, because timestamps lag.
                 is_modified = True
-                if last_record:
+                if last_record and not is_google_doc:
                     vault_hash = getattr(last_record, f"{doc_type}_hash")
-                    # Step 1: Check MD5
                     if drive_md5 and vault_hash and drive_md5 == vault_hash:
                         is_modified = False
                     else:
-                        # Step 2: Check Time (Strict 2s jitter)
                         try:
                             drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
                             vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
-                            if (drive_dt - vault_dt).total_seconds() <= 2: 
-                                is_modified = False
+                            if (drive_dt - vault_dt).total_seconds() <= 2: is_modified = False
                         except: pass
 
                 if not is_modified:
@@ -285,26 +267,27 @@ class ArchivalEngine:
                 try:
                     final_bytes = self.download_file(file_id, temp_path, original_url=link)
                     new_hash = hashlib.sha256(final_bytes).hexdigest()
-                    
-                    # Step 3: Text DNA comparison
                     new_text = ""
-                    is_text_doc = doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'readme']
-                    if is_text_doc: new_text = self._extract_text_from_pdf(temp_path)
+                    if is_google_doc: new_text = self._extract_text_from_pdf(temp_path)
                     
                     if last_record:
                         old_hash = getattr(last_record, f"{doc_type}_hash")
                         old_text = getattr(last_record, f"{doc_type}_text")
-                        if is_text_doc and new_text and old_text and new_text.strip() == old_text.strip():
+                        
+                        # --- THE DNA GATEKEEPER ---
+                        if is_google_doc:
+                            # If text matches 100%, skip versioning even if metadata changed.
+                            if new_text and old_text and new_text == old_text:
+                                logger.info(f"   [DNA MATCH] {doc_type.upper()} text is identical. Skipping v2.")
                                 results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                                 results[doc_type]['hash'] = old_hash
                                 results[doc_type]['text'] = old_text
-                                results[doc_type]['bin'] = b''
                                 if os.path.exists(temp_path): os.remove(temp_path)
                                 continue
-                        elif not is_text_doc and new_hash == old_hash:
+                        else:
+                            if new_hash == old_hash:
                                 results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                                 results[doc_type]['hash'] = old_hash
-                                results[doc_type]['bin'] = b''
                                 if os.path.exists(temp_path): os.remove(temp_path)
                                 continue
 
@@ -324,7 +307,6 @@ class ArchivalEngine:
                         results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
                         recovered_from_vault += 1
                     else: raise e
-
             except Exception as e:
                 error_msg += f"{doc_type.upper()}: {str(e)[:30]}; "
 
@@ -334,7 +316,6 @@ class ArchivalEngine:
 
         status = "partial" if error_msg else "archived"
         current_version = (last_record.version if last_record else 0) + 1
-
         MAX_BIN_SIZE = 15 * 1024 * 1024 
         def safe_bin(dt):
             b = results[dt]['bin']
