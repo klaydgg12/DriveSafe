@@ -403,7 +403,7 @@ class ArchivalEngine:
                 usability_test_binary=results['usability_test']['bin'],
                 presentation_binary=results['presentation']['bin'],
                 source_code_binary=results['source_code']['bin'], 
-                database_binary=results['database']['binary'] if 'binary' in results['database'] else results['database'].get('bin'), 
+                database_binary=results['database']['bin'], 
                 readme_binary=results['readme']['bin'],
                 
                 srs_text=results['srs']['text'], sdd_text=results['sdd']['text'],
