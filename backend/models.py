@@ -73,6 +73,7 @@ class ArchivalLedger(db.Model):
     status = db.Column(db.String(50), default='pending')
     version = db.Column(db.Integer, default=1)
     batch_id = db.Column(db.String(50), nullable=True)
+    archived_by = db.Column(db.String(120), nullable=True) # Email of the user who performed the archive
     drive_modified_time = db.Column(db.String(100), nullable=True) # Absolute Google Timestamp
     error_message = db.Column(db.Text, nullable=True)
     archived_at = db.Column(db.DateTime, nullable=True)

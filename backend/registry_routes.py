@@ -321,6 +321,7 @@ def archive_selected():
     batch_id = str(uuid.uuid4())[:13] # e.g. "a1b2c3d4-e5f6"
     
     user_creds = get_user_creds()
+    user_email = current_user.email # Capture the logged-in teacher's identity
     sheet_id = request.json.get('sheet_id') or request.args.get('sheet_id') or os.getenv('SHEET_ID')
     
     try:
@@ -331,7 +332,7 @@ def archive_selected():
 
     app_obj = current_app._get_current_object()
     
-    def process_task(app_context, project_list, creds, sid, wb_name):
+    def process_task(app_context, project_list, creds, sid, wb_name, archived_by_email):
         from concurrent.futures import ThreadPoolExecutor
         to_process = []
         for p in project_list:
@@ -364,7 +365,7 @@ def archive_selected():
                         import time, random
                         time.sleep(random.uniform(0.1, 2.0))
                         _, engine = get_services(requested_sheet_id=sid, provided_user_creds=creds)
-                        result = engine.archive_project(p, workbook_name=wb_name, batch_id=batch_id)
+                        result = engine.archive_project(p, workbook_name=wb_name, batch_id=batch_id, archived_by=archived_by_email)
                         status = result['status'].capitalize()
                         if result['status'] == 'unchanged': status = 'Archived'
                         LIVE_STATUS_TRACKER[tracker_key] = status
@@ -402,8 +403,9 @@ def archive_selected():
                     finally:
                         db.session.remove()
 
-    thread = threading.Thread(target=process_task, args=(app_obj, projects, user_creds, sheet_id, workbook_name))
+    thread = threading.Thread(target=process_task, args=(app_obj, projects, user_creds, sheet_id, workbook_name, user_email))
     thread.start()
+    return jsonify({"message": f"Started archival for {len(projects)} projects."}), 202
     return jsonify({"message": f"Started archival for {len(projects)} projects."}), 202
 
 @registry_bp.route('/reset', methods=['POST'])

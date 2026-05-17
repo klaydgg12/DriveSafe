@@ -141,9 +141,11 @@ class ArchivalEngine:
             file_metadata = self.service.files().get(fileId=file_id, fields='mimeType, name').execute()
             mime_type = file_metadata.get('mimeType')
             file_name = file_metadata.get('name')
-            logger.info(f"Downloading: {file_name}")
+            logger.info(f"Downloading: {file_name} ({mime_type})")
 
             fh = io.BytesIO()
+            
+            # Case 1: Native Google Docs/Sheets
             if 'google-apps.document' in mime_type or 'google-apps.spreadsheet' in mime_type:
                 logger.info(f"Exporting Google Doc {file_name} to PDF...")
                 try:
@@ -156,8 +158,43 @@ class ArchivalEngine:
                     if "exportSizeLimitExceeded" in str(export_err):
                         raise Exception("File too large for Google to convert. Please upload as a PDF file directly.")
                     raise export_err
+            
+            # Case 2: MS Word (.docx) or Markdown (.md) - AUTO-CONVERT TO PDF
+            elif 'officedocument.wordprocessingml.document' in mime_type or file_name.endswith('.md') or mime_type == 'text/markdown' or mime_type == 'text/plain':
+                logger.info(f"Converting {file_name} to PDF via temporary Google Doc...")
+                
+                # 1. Download raw content
+                raw_fh = io.BytesIO()
+                downloader = MediaIoBaseDownload(raw_fh, self.service.files().get_media(fileId=file_id))
+                done = False
+                while not done:
+                    _, done = downloader.next_chunk()
+                
+                # 2. Upload to Google Docs for conversion
+                temp_metadata = {
+                    'name': f"TEMP_CONV_{file_name}",
+                    'mimeType': 'application/vnd.google-apps.document'
+                }
+                upload_mime = mime_type
+                if file_name.endswith('.md'): upload_mime = 'text/plain'
+                
+                media = MediaIoBaseUpload(io.BytesIO(raw_fh.getvalue()), mimetype=upload_mime, resumable=True)
+                temp_file = self.service.files().create(body=temp_metadata, media_body=media, fields='id').execute()
+                temp_id = temp_file.get('id')
+                
+                try:
+                    # 3. Export the temporary Doc as PDF
+                    request = self.service.files().export_media(fileId=temp_id, mimeType='application/pdf')
+                    downloader = MediaIoBaseDownload(fh, request)
+                    done = False
+                    while not done:
+                        _, done = downloader.next_chunk()
+                finally:
+                    # 4. Clean up temporary file
+                    self.service.files().delete(fileId=temp_id).execute()
+
+            # Case 3: Already a PDF or other asset
             else:
-                # Direct download for PDFs and non-Google assets
                 request = self.service.files().get_media(fileId=file_id)
                 downloader = MediaIoBaseDownload(fh, request)
                 done = False
@@ -176,7 +213,7 @@ class ArchivalEngine:
             return self.service.files().get(fileId=file_id, fields='modifiedTime, md5Checksum, name, mimeType').execute()
         except: return None
 
-    def archive_project(self, project_data, workbook_name="Archives", batch_id=None):
+    def archive_project(self, project_data, workbook_name="Archives", batch_id=None, archived_by=None):
         project_id = project_data.get('project_id', 'Unknown')
         clean_title = project_data.get('project_title', 'Untitled').replace(' ', '_').replace('/', '_')
         clean_id = str(project_id).replace(' ', '_').replace('/', '_')
@@ -204,7 +241,6 @@ class ArchivalEngine:
             
             file_id = raw_id
             if is_folder:
-                # Use target_hint to find the right file in the folder (e.g. search for "SRS")
                 file_id, folder_meta = self._resolve_folder(raw_id, target_hint=doc_type.upper())
                 if not file_id:
                     error_msg += f"{doc_type.upper()}: Folder is empty; "
@@ -217,7 +253,6 @@ class ArchivalEngine:
                 continue
 
             try:
-                # 1. FETCH LIVE CLOCK FROM GOOGLE
                 metadata = self._get_file_metadata(file_id)
                 if not metadata:
                     error_msg += f"{doc_type.upper()}: Access Denied; "
@@ -226,7 +261,6 @@ class ArchivalEngine:
                 current_drive_ts = metadata.get('modifiedTime', 'Unknown')
                 results[doc_type]['ts'] = current_drive_ts
 
-                # 2. RELIABLE TIMESTAMP VERSIONING
                 is_modified = True
                 if last_record and last_record.archived_at and current_drive_ts != 'Unknown':
                     try:
@@ -249,7 +283,7 @@ class ArchivalEngine:
                 import time
                 time.sleep(5) 
 
-                doc_dir = os.path.join(self.archive_root, workbook_name, folder_name, doc_type.upper())
+                doc_dir = os.path.join(base_project_dir, doc_type.upper())
                 os.makedirs(doc_dir, exist_ok=True)
                 temp_path = os.path.join(doc_dir, f"TEMP_{doc_type.upper()}.pdf")
 
@@ -257,7 +291,6 @@ class ArchivalEngine:
                     self.download_file(file_id, temp_path)
                 except Exception as down_err:
                     err_str = str(down_err)
-                    # Prioritize specific known errors
                     if "File too large" in err_str:
                         error_msg += f"{doc_type.upper()}: {err_str}; "
                     elif "403" in err_str or "permission" in err_str.lower():
@@ -284,8 +317,7 @@ class ArchivalEngine:
                     if file_text and last_text:
                         vectorizer = TfidfVectorizer().fit_transform([file_text, last_text])
                         sim = cosine_similarity(vectorizer)[0][1]
-                        if sim > 0.999: # 99.9% identical
-                            logger.info(f"SEMANTIC MATCH: {doc_type.upper()} is identical to last version content. Skipping.")
+                        if sim > 0.999:
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                             results[doc_type]['is_changed'] = False
                             processed_file_ids[file_id] = {'data': results[doc_type]}
@@ -333,6 +365,7 @@ class ArchivalEngine:
             ledger_entry = ArchivalLedger(
                 project_id=project_id, project_title=project_data.get('project_title'),
                 academic_year=academic_year, workbook_name=workbook_name,
+                archived_by=archived_by, # SAVE USER EMAIL
                 srs_original_url=project_data.get('srs_link'), sdd_original_url=project_data.get('sdd_link'),
                 spmp_original_url=project_data.get('spmp_link'), std_original_url=project_data.get('std_link'),
                 ri_original_url=project_data.get('ri_link'), source_code_original_url=project_data.get('source_code_link'),
@@ -361,6 +394,6 @@ class ArchivalEngine:
         except Exception as save_err:
             logger.error(f"CRITICAL DATABASE ERROR: {save_err}")
             db.session.rollback()
-            return {'status': 'failed', 'version': current_version, 'error': f"Database save failed. Schema mismatch."}
+            return {'status': 'failed', 'version': current_version, 'error': f"Database save failed. {save_err}"}
         
         return {'status': status, 'version': current_version, 'paths': {dt: results[dt]['path'] for dt in doc_types}, 'error': error_msg.strip()}

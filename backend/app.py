@@ -87,7 +87,8 @@ with app.app_context():
         columns_to_add = [
             # Metadata
             ('batch_id', 'VARCHAR(50) AFTER version'),
-            ('drive_modified_time', 'VARCHAR(100) AFTER batch_id'),
+            ('archived_by', 'VARCHAR(120) AFTER batch_id'),
+            ('drive_modified_time', 'VARCHAR(100) AFTER archived_by'),
             
             # Original URLs
             ('source_code_original_url', 'VARCHAR(500) AFTER ri_original_url'),
