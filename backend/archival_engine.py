@@ -353,12 +353,20 @@ class ArchivalEngine:
         if total_changed == 0 and last_record:
             return {'status': 'unchanged', 'message': 'No edits found.', 'version': last_record.version}
 
-        if error_msg:
-            status = "partial" if total_changed > 0 else "failed"
-        else:
-            status = "archived"
-        
+        # 4. Final Decision
+        status = "partial" if error_msg and total_changed > 0 else ("failed" if error_msg else "archived")
         current_version = (last_record.version if last_record else 0) + (1 if status in ["archived", "partial"] else 0)
+
+        # --- SMART BINARY CAP (Fixes MySQL Gone Away) ---
+        # MariaDB default limit is often 16MB. We cap at 15MB to be safe.
+        MAX_BIN_SIZE = 15 * 1024 * 1024 
+        
+        def safe_bin(doc_type):
+            b = results[doc_type]['bin']
+            if b and len(b) > MAX_BIN_SIZE:
+                logger.warning(f"SKIPPING DB STORAGE for {doc_type.upper()}: File is {len(b)} bytes (Exceeds 15MB Cap). Local file is still safe.")
+                return None
+            return b
 
         try:
             ledger_entry = ArchivalLedger(
@@ -396,15 +404,16 @@ class ArchivalEngine:
                 database_hash=results['database']['hash'], 
                 readme_hash=results['readme']['hash'],
                 
-                srs_binary=results['srs']['bin'], sdd_binary=results['sdd']['bin'],
-                spmp_binary=results['spmp']['bin'], std_binary=results['std']['bin'],
-                ri_binary=results['ri']['bin'],
-                research_paper_binary=results['research_paper']['bin'],
-                usability_test_binary=results['usability_test']['bin'],
-                presentation_binary=results['presentation']['bin'],
-                source_code_binary=results['source_code']['bin'], 
-                database_binary=results['database']['bin'], 
-                readme_binary=results['readme']['bin'],
+                # Use the SAFE BINARY helper to avoid crashing the DB
+                srs_binary=safe_bin('srs'), sdd_binary=safe_bin('sdd'),
+                spmp_binary=safe_bin('spmp'), std_binary=safe_bin('std'),
+                ri_binary=safe_bin('ri'),
+                research_paper_binary=safe_bin('research_paper'),
+                usability_test_binary=safe_bin('usability_test'),
+                presentation_binary=safe_bin('presentation'),
+                source_code_binary=safe_bin('source_code'), 
+                database_binary=safe_bin('database'), 
+                readme_binary=safe_bin('readme'),
                 
                 srs_text=results['srs']['text'], sdd_text=results['sdd']['text'],
                 spmp_text=results['spmp']['text'], std_text=results['std']['text'],
@@ -421,6 +430,17 @@ class ArchivalEngine:
         except Exception as save_err:
             logger.error(f"CRITICAL DATABASE ERROR: {save_err}")
             db.session.rollback()
-            return {'status': 'failed', 'version': current_version, 'error': f"Database save failed. {save_err}"}
+            # If it STILL fails (e.g. total row size too big), save a skeleton record
+            try:
+                fail_record = ArchivalLedger(
+                    project_id=project_id, project_title=project_title,
+                    academic_year=academic_year, status='failed',
+                    error_message=f"Database Overload: Files are too large for SQL. {str(save_err)[:100]}",
+                    archived_at=datetime.datetime.utcnow()
+                )
+                db.session.add(fail_record)
+                db.session.commit()
+            except: pass
+            return {'status': 'failed', 'version': current_version, 'error': f"Vault Overload. File size exceeds database limits."}
         
         return {'status': status, 'version': current_version, 'paths': {dt: results[dt]['path'] for dt in doc_types}, 'error': error_msg.strip()}
