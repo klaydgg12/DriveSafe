@@ -7,7 +7,7 @@ import logging
 import pdfplumber
 import time
 import requests
-from urllib.parse import urlparse, parse_qs, urlencode
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from google.oauth2 import service_account
@@ -49,13 +49,15 @@ class ArchivalEngine:
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v9 Initialized (Institutional Stealth Mode)")
+        logger.info(f"ArchivalEngine Master v10 Initialized (Browser-Fidelity Protocol)")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
         s = str(url_or_id).replace('\\', '')
+        # Folder pattern
         match_folder = re.search(r'folders/([a-zA-Z0-9_-]{25,})', s)
         if match_folder: return match_folder.group(1), True
+        # File pattern
         match_file = re.search(r'/d/([a-zA-Z0-9_-]{25,})', s)
         if match_file: return match_file.group(1), False
         match_id = re.search(r'id=([a-zA-Z0-9_-]{25,})', s)
@@ -91,30 +93,34 @@ class ArchivalEngine:
 
     def validate_binary(self, data, is_pdf=True):
         if not data or len(data) < 500: return False
-        # Absolute Login-Page Detection
-        if b'<html' in data[:2000].lower() or b'google login' in data[:2000].lower() or b'sign in' in data[:2000].lower():
-            return False
+        # Absolute "Google Login" trap detection
+        content_sample = data[:2000].lower()
+        if b'<html' in content_sample:
+            if b'google' in content_sample or b'sign in' in content_sample or b'login' in content_sample:
+                return False
         if is_pdf and not data.startswith(b'%PDF-'): return False
         return True
 
-    def _construct_export_url(self, file_id, original_url=None, is_google_doc=True):
-        """Constructs a URL that includes institutional session hints (ouid, rtpof)"""
-        if not is_google_doc:
-            return f"https://drive.google.com/uc?export=download&id={file_id}"
-        
-        base = f"https://docs.google.com/document/d/{file_id}/export"
+    def _construct_browser_url(self, file_id, original_url=None, is_google_doc=True):
+        """Reconstructs the URL with ALL browser parameters harvested from the student link"""
         params = {'format': 'pdf'}
-        
-        # Capture institutional keys from original student link
+        if not is_google_doc:
+            params = {'export': 'download', 'id': file_id}
+            base_url = "https://drive.google.com/uc"
+        else:
+            base_url = f"https://docs.google.com/document/d/{file_id}/export"
+
+        # DEEP HARVEST: Copy every session parameter to mimic the user's browser state
         if original_url and '?' in str(original_url):
             try:
                 parsed = urlparse(str(original_url))
                 query = parse_qs(parsed.query)
-                for key in ['ouid', 'rtpof', 'authuser', 'usp']:
+                # These are the "Magic Keys" that unlock institutional documents
+                for key in ['ouid', 'rtpof', 'authuser', 'usp', 'view', 'sle', 'rm']:
                     if key in query: params[key] = query[key][0]
             except: pass
             
-        return f"{base}?{urlencode(params)}"
+        return f"{base_url}?{urlencode(params)}"
 
     def download_file(self, file_id, destination_path, original_url=None):
         try:
@@ -122,24 +128,28 @@ class ArchivalEngine:
             meta = self._get_file_metadata(file_id)
             mime_type = meta.get('mimeType', '').lower() if meta else 'unknown'
             file_name = meta.get('name', 'unknown') if meta else 'Document'
-            # Fallback detection for is_google
-            is_google = 'google-apps' in mime_type or (original_url and 'docs.google.com/document' in str(original_url))
+            is_google = 'google-apps' in mime_type or (original_url and 'docs.google.com' in str(original_url))
             
-            logger.info(f"[{self.identity_label}] STEALTH ARCHIVE: {file_name}")
+            logger.info(f"[{self.identity_label}] BROWSER-FIDELITY ARCHIVE: {file_name}")
 
-            # --- ATTEMPT 1: INSTITUTIONAL STEALTH MIRROR (Digital Twin) ---
+            # --- ATTEMPT 1: BROWSER-FIDELITY MIRROR (High Success Rate for Locks) ---
             final_data = None
             try:
-                url = self._construct_export_url(file_id, original_url, is_google_doc=is_google)
+                url = self._construct_browser_url(file_id, original_url, is_google_doc=is_google)
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                    'Accept': 'application/pdf,application/octet-stream,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept': 'application/pdf,application/octet-stream,text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
                     'Accept-Language': 'en-US,en;q=0.9',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache',
                     'Referer': 'https://docs.google.com/',
-                    'Origin': 'https://docs.google.com',
                     'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
                     'Sec-Ch-Ua-Mobile': '?0',
                     'Sec-Ch-Ua-Platform': '"Windows"',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'same-origin',
+                    'Sec-Fetch-User': '?1',
                     'Upgrade-Insecure-Requests': '1'
                 }
                 
@@ -147,66 +157,60 @@ class ArchivalEngine:
                     if hasattr(self.creds, 'valid') and not self.creds.valid: 
                         try: self.creds.refresh(requests.Session())
                         except: pass
+                    # The Teacher's Token is the primary "Key"
                     headers['Authorization'] = f'Bearer {self.creds.token}'
                 
                 resp = self.session.get(url, headers=headers, timeout=60, allow_redirects=True)
                 if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=is_pdf_target):
                     final_data = resp.content
                 elif resp.status_code == 403:
-                    logger.warning(f"   [STEALTH BLOCKED] HTTP 403 - Trying API Fallback...")
-            except Exception as e: logger.warning(f"Stealth Mirror failed: {e}")
+                    logger.warning(f"   [BLOCKED] 403 Access Denied. Parameters might be insufficient.")
+            except Exception as e: logger.warning(f"Browser Mirror failed: {e}")
 
-            # --- ATTEMPT 2: OFFICIAL GOOGLE API (Identity Fallback) ---
+            # --- ATTEMPT 2: OFFICIAL API FALLBACK ---
             if not final_data:
                 try:
                     fh = io.BytesIO()
-                    if is_google: 
-                        request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
-                    else: 
-                        request = self.service.files().get_media(fileId=file_id)
-                    
+                    if is_google: request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
+                    else: request = self.service.files().get_media(fileId=file_id)
                     downloader = MediaIoBaseDownload(fh, request)
                     done = False
-                    while not done:
-                        status, done = downloader.next_chunk()
-                        if status: logger.info(f"   [API PROGRESS] {int(status.progress() * 100)}%")
-                    
+                    while not done: _, done = downloader.next_chunk()
                     if self.validate_binary(fh.getvalue(), is_pdf=is_pdf_target):
                          final_data = fh.getvalue()
                 except Exception as e: logger.warning(f"API Fallback failed: {e}")
 
             if not final_data:
-                raise Exception("Access Denied (Institutional Lock - 403)")
+                raise Exception("Access Denied (If you can see it in browser, check if you are logged in to the correct account)")
 
-            # Forced Conversion (for .docx files)
+            # Forced Conversion logic for docx
             if is_pdf_target and not final_data.startswith(b'%PDF-'):
                 if final_data.startswith(b'PK\x03\x04') or str(file_name).lower().endswith(('.docx', '.doc')):
-                    logger.info(f"   [CONVERTING] Document to PDF...")
+                    logger.info(f"   [CONVERTING] Word to PDF...")
                     temp_meta = {'name': f"CONV_{int(time.time())}", 'mimeType': 'application/vnd.google-apps.document'}
                     media = MediaIoBaseUpload(io.BytesIO(final_data), mimetype='application/octet-stream', resumable=True)
                     temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id').execute()
                     t_id = temp_file.get('id')
                     try:
-                        time.sleep(8) # Critical breathe for conversion
+                        time.sleep(5)
                         req = self.service.files().export_media(fileId=t_id, mimeType='application/pdf')
                         fh = io.BytesIO()
                         dld = MediaIoBaseDownload(fh, req)
                         d_done = False
                         while not d_done: _, d_done = dld.next_chunk()
                         data = fh.getvalue()
-                        if data.startswith(b'%PDF-'):
-                            final_data = data
+                        if data.startswith(b'%PDF-'): final_data = data
                     finally:
                         try: self.service.files().delete(fileId=t_id).execute()
                         except: pass
 
             if is_pdf_target and not final_data.startswith(b'%PDF-'):
-                raise Exception("Google blocked PDF conversion (Locked Content)")
+                raise Exception("PDF Conversion Failed (Document might be protected)")
 
             with open(destination_path, 'wb') as f: f.write(final_data)
             return final_data
         except Exception as e:
-            logger.error(f"FATAL DOWNLOAD ERROR for {file_id}: {e}")
+            logger.error(f"Ultimate Failure for {file_id}: {e}")
             raise e
 
     def archive_project(self, project_data, workbook_name="Archives", batch_id=None, archived_by=None):
@@ -215,13 +219,9 @@ class ArchivalEngine:
         clean_title = str(project_title).replace(' ', '_').replace('/', '_').replace('\\', '_')
         academic_year = project_data.get('academic_year')
         
-        base_project_dir = os.path.join(
-            self.archive_root, workbook_name, academic_year, 
-            batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}"
-        )
+        base_project_dir = os.path.join(self.archive_root, workbook_name, academic_year, batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}")
         os.makedirs(base_project_dir, exist_ok=True)
         
-        # --- TARGET GLOBAL HISTORY ---
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id, academic_year=academic_year
         ).order_by(ArchivalLedger.version.desc()).first()
@@ -248,13 +248,12 @@ class ArchivalEngine:
                 current_drive_ts = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
                 results[doc_type]['ts'] = current_drive_ts
 
-                # --- LAYER 1: FAST TIMESTAMP DEDUPLICATION ---
+                # Layer 1: Time check
                 is_modified = True
                 if last_record and last_record.archived_at and current_drive_ts != 'Unknown':
                     try:
                         drive_dt = datetime.datetime.fromisoformat(current_drive_ts.replace('Z', '+00:00'))
                         vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
-                        # Buffer of 60s
                         if (drive_dt - vault_dt).total_seconds() < 60:
                             l_path = getattr(last_record, f"{doc_type}_local_path")
                             if l_path and os.path.exists(os.path.join(self.archive_root, l_path)):
@@ -275,7 +274,7 @@ class ArchivalEngine:
                 final_bytes = self.download_file(file_id, temp_path, original_url=link)
                 new_hash = hashlib.sha256(final_bytes).hexdigest()
                 
-                # --- LAYER 2: ABSOLUTE BYTE-HASH DEDUPLICATION ---
+                # Layer 2: Byte check
                 if last_record:
                     if new_hash == getattr(last_record, f"{doc_type}_hash"):
                         results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
@@ -289,7 +288,6 @@ class ArchivalEngine:
                 total_changed += 1
                 results[doc_type]['is_changed'] = True
                 
-                # Dynamic versioning based on global latest
                 current_rev = last_record.version if last_record else 0
                 final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{current_rev+1}.pdf")
                 os.rename(temp_path, final_path)
@@ -339,7 +337,11 @@ class ArchivalEngine:
                 ri_binary=safe_bin('ri'), research_paper_binary=safe_bin('research_paper'),
                 usability_test_binary=safe_bin('usability_test'), presentation_binary=safe_bin('presentation'),
                 source_code_binary=safe_bin('source_code'), database_binary=safe_bin('database'),
-                readme_binary=safe_bin('readme')
+                readme_binary=safe_bin('readme'),
+                srs_text=results['srs']['text'], sdd_text=results['sdd']['text'],
+                spmp_text=results['spmp']['text'], std_text=results['std']['text'],
+                ri_text=results['ri']['text'], research_paper_text=results['research_paper']['text'],
+                usability_test_text=results['usability_test']['text'], readme_text=results['readme']['text']
             )
             db.session.add(entry)
             db.session.commit()
