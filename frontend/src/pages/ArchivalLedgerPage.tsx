@@ -25,6 +25,7 @@ interface ProjectGroup {
   workbook_name?: string;
   status: 'Archived' | 'Failed' | 'Pending';
   error_message?: string;
+  db_ids: number[];
   documents: { 
     srs: Version[]; 
     sdd: Version[]; 
@@ -120,14 +121,22 @@ const ArchivalLedgerPage = () => {
   };
 
   const handleDeleteProject = async (project: ProjectGroup) => {
-    if (!window.confirm(`Are you sure you want to PERMANENTLY REMOVE all ${Object.values(project.documents).flat().length} archival records for "${project.project_title}"?`)) return;
+    const totalCount = project.db_ids?.length || 0;
+    if (!window.confirm(`Are you sure you want to PERMANENTLY REMOVE all ${totalCount} archival records for "${project.project_title}"?`)) return;
     
     setLoading(true);
     try {
-      const allIds = Array.from(new Set(Object.values(project.documents).flat().map(v => v.id)));
+      const allIds = project.db_ids || [];
+      if (allIds.length === 0) {
+        alert("No database records found for this project.");
+        return;
+      }
       await Promise.all(allIds.map(id => axios.delete(`/api/registry/ledger/${id}`, { withCredentials: true })));
       fetchLedger();
-    } catch (err) { alert("Bulk delete failed. Some records might remain."); }
+    } catch (err) { 
+      console.error("Delete failed:", err);
+      alert("Bulk delete failed. Some records might remain."); 
+    }
     finally { setLoading(false); }
   };
 
