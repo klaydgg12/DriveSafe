@@ -150,8 +150,6 @@ class ArchivalEngine:
                 mime_type = file_metadata.get('mimeType', '')
                 file_name = file_metadata.get('name', 'unknown')
             except Exception as api_meta_err:
-                # If API fails with 403, it might be an organizational restriction on the API. 
-                # Try to guess mime from extension if possible, or assume PDF for fallback
                 if "403" in str(api_meta_err):
                     logger.info(f"[{self.identity_label}] Metadata 403. Switching to Public Fallback...")
                     return self._public_download_fallback(file_id, destination_path)
@@ -194,7 +192,6 @@ class ArchivalEngine:
             raise e
 
     def _public_download_fallback(self, file_id, destination_path, is_export=False, is_sheet=False):
-        """Mirror the browser's behavior for public links (No token required)"""
         try:
             if is_export:
                 url = f"https://docs.google.com/document/d/{file_id}/export?format=pdf"
@@ -202,19 +199,15 @@ class ArchivalEngine:
             else:
                 url = f"https://drive.google.com/uc?export=download&id={file_id}"
             
-            # Try with Teacher Token first for better success on internal files
             headers = {}
             if self.creds:
-                 # Ensure token is fresh
-                 if not self.creds.valid:
+                 if hasattr(self.creds, 'valid') and not self.creds.valid:
                       self.creds.refresh(requests.Session())
-                 headers = {'Authorization': f'Bearer {self.creds.token}'}
+                 if hasattr(self.creds, 'token'):
+                      headers = {'Authorization': f'Bearer {self.creds.token}'}
 
             resp = requests.get(url, headers=headers, timeout=60, stream=True)
-            
-            # If 403 with token, try WITHOUT token (Publicly Shared)
             if resp.status_code == 403:
-                 logger.info("Token restricted. Trying 100% public download...")
                  resp = requests.get(url, timeout=60, stream=True)
 
             if resp.status_code == 200:
@@ -243,9 +236,11 @@ class ArchivalEngine:
         base_project_dir = os.path.join(self.archive_root, workbook_name, folder_name)
         os.makedirs(base_project_dir, exist_ok=True)
         
-        # Get the latest version in the vault
-        last_record = ArchivalLedger.query.filter_by(
-            project_id=project_id, academic_year=academic_year, status='archived'
+        # Get the latest version in the vault (Including partial successes)
+        last_record = ArchivalLedger.query.filter(
+            ArchivalLedger.project_id == project_id,
+            ArchivalLedger.academic_year == academic_year,
+            ArchivalLedger.status.in_(['archived', 'partial'])
         ).order_by(ArchivalLedger.version.desc()).first()
         
         doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'presentation', 'source_code', 'database', 'readme']
@@ -274,12 +269,13 @@ class ArchivalEngine:
             try:
                 metadata = self._get_file_metadata(file_id)
                 if not metadata:
-                    error_msg += f"{doc_type.upper()}: Permission Denied (Link is not shared); "
+                    error_msg += f"{doc_type.upper()}: Access Denied (Link is not shared); "
                     continue
 
                 current_drive_ts = metadata.get('modifiedTime', 'Unknown')
                 results[doc_type]['ts'] = current_drive_ts
 
+                # --- STEP 1: Fast Timestamp Check ---
                 is_modified = True
                 if last_record and last_record.archived_at and current_drive_ts != 'Unknown':
                     try:
@@ -296,6 +292,7 @@ class ArchivalEngine:
                     processed_file_ids[file_id] = {'data': results[doc_type]}
                     continue
 
+                # --- STEP 2: Process New Version ---
                 doc_dir = os.path.join(base_project_dir, doc_type.upper())
                 os.makedirs(doc_dir, exist_ok=True)
                 temp_path = os.path.join(doc_dir, f"TEMP_{doc_type.upper()}.pdf")
@@ -304,25 +301,27 @@ class ArchivalEngine:
                 
                 with open(temp_path, "rb") as f:
                     file_binary = f.read()
-                    results[doc_type]['bin'] = file_binary
+                
+                new_hash = metadata.get('md5Checksum') or hashlib.sha256(file_binary).hexdigest()
+                
+                # --- STEP 3: STRICT HASH DEDUPLICATION ---
+                if last_record:
+                    last_hash = getattr(last_record, f"{doc_type}_hash")
+                    if new_hash == last_hash:
+                        logger.info(f"DEDUPLICATED: {doc_type.upper()} bytes are identical to vault. Skipping.")
+                        results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                        results[doc_type]['hash'] = last_hash
+                        results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
+                        results[doc_type]['bin'] = None
+                        processed_file_ids[file_id] = {'data': results[doc_type]}
+                        if os.path.exists(temp_path): os.remove(temp_path)
+                        continue
 
-                results[doc_type]['hash'] = metadata.get('md5Checksum') or hashlib.sha256(file_binary).hexdigest()
+                results[doc_type]['bin'] = file_binary
+                results[doc_type]['hash'] = new_hash
                 
                 if doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'readme']:
                     results[doc_type]['text'] = self._extract_text_from_pdf(temp_path)
-
-                # Semantic Merge
-                if last_record:
-                    last_text = getattr(last_record, f"{doc_type}_text")
-                    if results[doc_type]['text'] and last_text:
-                        vectorizer = TfidfVectorizer().fit_transform([results[doc_type]['text'], last_text])
-                        sim = cosine_similarity(vectorizer)[0][1]
-                        if sim > 0.999:
-                            results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                            results[doc_type]['is_changed'] = False
-                            processed_file_ids[file_id] = {'data': results[doc_type]}
-                            if os.path.exists(temp_path): os.remove(temp_path)
-                            continue
 
                 total_changed += 1
                 results[doc_type]['is_changed'] = True
@@ -342,7 +341,7 @@ class ArchivalEngine:
             except Exception as e:
                 logger.error(f"Error processing {doc_type}: {e}")
                 err_str = str(e)
-                id_tag = f"[{self.identity_label.split(' ')[0]}]" # [TEACHER] or [ROBOT]
+                id_tag = f"[{self.identity_label.split(' ')[0]}]" 
                 
                 if "File too large" in err_str:
                     error_msg += f"{id_tag} {doc_type.upper()}: File is too massive for Google's converter. Student must upload as a PDF; "
@@ -404,7 +403,7 @@ class ArchivalEngine:
                 usability_test_binary=results['usability_test']['bin'],
                 presentation_binary=results['presentation']['bin'],
                 source_code_binary=results['source_code']['bin'], 
-                database_binary=results['database']['bin'], 
+                database_binary=results['database']['binary'] if 'binary' in results['database'] else results['database'].get('bin'), 
                 readme_binary=results['readme']['bin'],
                 
                 srs_text=results['srs']['text'], sdd_text=results['sdd']['text'],
