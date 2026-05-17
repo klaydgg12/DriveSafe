@@ -37,14 +37,10 @@ def get_user_creds():
         logger.error(f"DEBUG: Failed to create credentials: {e}")
         return None
 
-def get_services(requested_sheet_id=None, provided_user_creds=None):
-    logger.info("DEBUG: Entering get_services")
+def get_services(requested_sheet_id=None, provided_user_creds=None, force_user=False):
     sheet_id = requested_sheet_id
-    
-    # Safely handle request context
     if not sheet_id and has_request_context():
         try:
-            # Prefer args for GET requests
             sheet_id = request.args.get('sheet_id')
             if not sheet_id and request.is_json:
                 sheet_id = request.json.get('sheet_id')
@@ -53,13 +49,13 @@ def get_services(requested_sheet_id=None, provided_user_creds=None):
     if not sheet_id:
         sheet_id = os.getenv('SHEET_ID')
         
-    logger.info(f"DEBUG: Target Sheet ID: {sheet_id}")
     user_creds = provided_user_creds or get_user_creds()
     service_account_path = os.getenv('SERVICE_ACCOUNT_JSON')
     archive_root = os.getenv('ARCHIVE_ROOT', 'Capstone_Archives')
     
-    logger.info(f"DEBUG: User Creds Present: {user_creds is not None}")
-    logger.info(f"DEBUG: Service Account Path Present: {service_account_path is not None}")
+    # CRITICAL: Force User Identity for Archival tasks to ensure organizational permissions
+    if force_user and not user_creds:
+        raise Exception("Google Session Required: You must be logged in to archive internal documents. The 'Robot' (Service Account) is prohibited for this action.")
 
     try:
         sheets_service = RegistrySheetsService(
@@ -67,23 +63,15 @@ def get_services(requested_sheet_id=None, provided_user_creds=None):
             service_account_json_path=service_account_path if not user_creds else None,
             sheet_id=sheet_id
         )
-        logger.info("DEBUG: RegistrySheetsService initialized")
-    except Exception as e:
-        logger.error(f"DEBUG: Failed to init RegistrySheetsService: {e}", exc_info=True)
-        raise e
-    
-    try:
         engine = ArchivalEngine(
             user_credentials=user_creds,
             service_account_json_path=service_account_path if not user_creds else None,
             archive_root=archive_root
         )
-        logger.info("DEBUG: ArchivalEngine initialized")
+        return sheets_service, engine
     except Exception as e:
-        logger.error(f"DEBUG: Failed to init ArchivalEngine: {e}", exc_info=True)
+        logger.error(f"Service Init Error: {e}")
         raise e
-
-    return sheets_service, engine
 
 @registry_bp.route('/list-sheets', methods=['GET'], strict_slashes=False)
 @login_required
