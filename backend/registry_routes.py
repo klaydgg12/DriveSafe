@@ -151,12 +151,20 @@ def get_pending():
             if tracker_key in LIVE_STATUS_TRACKER:
                 p['status'] = LIVE_STATUS_TRACKER[tracker_key]
 
-            last_record = ArchivalLedger.query.filter_by(
-                project_id=p['project_id'],
-                academic_year=year,
-                status='archived'
+            # Latest version can be from either full or partial archival
+            last_record = ArchivalLedger.query.filter(
+                ArchivalLedger.project_id == p['project_id'],
+                ArchivalLedger.academic_year == year,
+                ArchivalLedger.status.in_(['archived', 'partial'])
             ).order_by(ArchivalLedger.version.desc()).first()
             p['latest_version'] = last_record.version if last_record else 0
+            
+            # If the dashboard shows FAILED but has no details, try pulling the last error from the DB
+            if p['status'].lower() in ['failed', 'partial'] and not p.get('error_message'):
+                last_err_record = ArchivalLedger.query.filter_by(
+                    project_id=p['project_id'], academic_year=year
+                ).order_by(ArchivalLedger.id.desc()).first()
+                if last_err_record: p['error_message'] = last_err_record.error_message
             
         return jsonify({
             'projects': projects,

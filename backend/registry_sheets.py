@@ -140,6 +140,7 @@ class RegistrySheetsService:
                     'database_link': get_val('database_link'),
                     'readme_link': get_val('readme_link'),
                     'status': get_val('status', 'Pending'),
+                    'error_message': get_val('error'), # PULL FROM SHEET
                     'academic_year': sheet_name,
                     'conflicting_fields': [],
                     '_file_ids': current_file_ids
@@ -150,6 +151,13 @@ class RegistrySheetsService:
                 if merge_key in team_groups:
                     existing = team_groups[merge_key]
                     conflicts = set(existing.get('conflicting_fields', []))
+                    
+                    # Merge error messages if both exist
+                    combined_error = existing.get('error_message', '')
+                    new_error = project.get('error_message', '')
+                    if new_error and new_error not in combined_error:
+                        project['error_message'] = f"{combined_error} | {new_error}".strip(' | ')
+
                     doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'github', 'database', 'readme']
                     for dt in doc_types:
                         if current_file_ids[dt] and existing['_file_ids'][dt] and current_file_ids[dt] != existing['_file_ids'][dt]:
