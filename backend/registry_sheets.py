@@ -113,6 +113,9 @@ class RegistrySheetsService:
 
     def get_all_projects(self, sheet_name):
         """Fetch all rows and merge by TEAM ID with granular link conflict detection"""
+        if not self.workbook:
+            raise ValueError(f"Workbook not found or inaccessible (ID: {self.sheet_id}). Please check permissions.")
+
         try:
             worksheet = self.workbook.worksheet(sheet_name)
             all_records = worksheet.get_all_values()
@@ -202,8 +205,9 @@ class RegistrySheetsService:
                     team_groups[merge_key] = project
                 
             # Convert dictionary back to a sorted list based on original row order
+            projects_list = sorted(team_groups.values(), key=lambda x: x['row_index'])
             available_docs = [key.replace('_link', '') for key in col_map.keys() if '_link' in key]
-
+            
             return {'projects': projects_list, 'available_docs': available_docs}
         except Exception as e:
             logger.error(f"Error fetching projects: {e}")
@@ -211,6 +215,7 @@ class RegistrySheetsService:
 
     def update_status(self, sheet_name, row_index, status, **kwargs):
         """Update row details using dynamic column detection"""
+        if not self.workbook: return
         worksheet = self.workbook.worksheet(sheet_name)
         col_map = self._get_header_map(worksheet)
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -241,9 +246,8 @@ class RegistrySheetsService:
     def batch_update_statuses(self, sheet_name, status_updates):
         """
         Update multiple rows in one call.
-        status_updates: list of dicts like {'row_index': 2, 'status': 'Archived', 'kwargs': {...}}
         """
-        if not status_updates: return
+        if not status_updates or not self.workbook: return
         
         worksheet = self.workbook.worksheet(sheet_name)
         col_map = self._get_header_map(worksheet)
@@ -273,7 +277,6 @@ class RegistrySheetsService:
             add_to_batch('error', kwargs.get('error_msg'))
 
         if all_updates:
-            # gspread supports batch_update on the worksheet
             worksheet.batch_update(all_updates)
             logger.info(f"Batch updated {len(status_updates)} rows in {sheet_name}")
 
@@ -282,13 +285,12 @@ class RegistrySheetsService:
         return self.workbook.title if self.workbook else "Unknown_Workbook"
 
     def get_all_sheet_names(self):
-        """List all worksheet names in the workbook (e.g., '2024-2025', '2025-2026')"""
-        return [ws.title for ws in self.workbook.worksheets()]
+        """List all worksheet names in the workbook"""
+        return [ws.title for ws in self.workbook.worksheets()] if self.workbook else []
 
     def list_available_sheets(self):
         """List all Google Sheets files the service account can access"""
         try:
-            # This requires the "Google Drive API" to be enabled in Cloud Console
             files = self.client.list_spreadsheet_files()
             return [{"id": f["id"], "name": f["name"]} for f in files]
         except Exception as e:
