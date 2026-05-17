@@ -49,7 +49,7 @@ class ArchivalEngine:
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v12 Initialized (Vault-First Resilience)")
+        logger.info(f"ArchivalEngine Master v13 Initialized (Critical Update Detection Fix)")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -127,9 +127,8 @@ class ArchivalEngine:
             is_google = 'google-apps' in mime_type or (original_url and 'docs.google.com' in str(original_url))
             is_pdf_target = destination_path.lower().endswith('.pdf')
             
-            logger.info(f"[{self.identity_label}] RESILIENT ARCHIVE: {file_name}")
+            logger.info(f"[{self.identity_label}] DOWNLOADING: {file_name}")
 
-            # --- ATTEMPT 1: STEALTH MIRROR ---
             final_data = None
             for attempt in range(2):
                 try:
@@ -150,7 +149,6 @@ class ArchivalEngine:
                         break
                 except: pass
 
-            # --- ATTEMPT 2: API ---
             if not final_data:
                 try:
                     fh = io.BytesIO()
@@ -166,7 +164,7 @@ class ArchivalEngine:
             if not final_data:
                 raise Exception("Access Denied (Locked)")
 
-            # Conversion
+            # Word to PDF conversion
             if is_pdf_target and not final_data.startswith(b'%PDF-'):
                 if final_data.startswith(b'PK\x03\x04') or str(file_name).lower().endswith(('.docx', '.doc')):
                     temp_meta = {'name': f"CONV_{int(time.time())}", 'mimeType': 'application/vnd.google-apps.document'}
@@ -203,7 +201,6 @@ class ArchivalEngine:
         base_project_dir = os.path.join(self.archive_root, workbook_name, academic_year, batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}")
         os.makedirs(base_project_dir, exist_ok=True)
         
-        # Absolute latest record globally for this project
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id, academic_year=academic_year
         ).order_by(ArchivalLedger.version.desc()).first()
@@ -229,20 +226,24 @@ class ArchivalEngine:
                 continue
 
             try:
-                # Deduplication logic
+                # --- CRITICAL: ACCURATE DEDUPLICATION ---
                 drive_md5 = metadata.get('md5Checksum') if metadata else None
                 results[doc_type]['ts'] = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
                 
                 is_modified = True
                 if last_record:
                     vault_hash = getattr(last_record, f"{doc_type}_hash")
+                    # LAYER 0: Binary Check (Best for non-Docs)
                     if drive_md5 and vault_hash and drive_md5 == vault_hash:
                         is_modified = False
                     else:
+                        # LAYER 1: Timestamp Check (Strict 2s Jitter)
                         try:
                             drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
                             vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
-                            if (drive_dt - vault_dt).total_seconds() < 60: is_modified = False
+                            # FIX: Only mark as unmodified if Google Time is NOT newer than Vault Time
+                            if (drive_dt - vault_dt).total_seconds() <= 2: 
+                                is_modified = False
                         except: pass
 
                 if not is_modified:
@@ -257,9 +258,10 @@ class ArchivalEngine:
 
                 try:
                     final_bytes = self.download_file(file_id, temp_path, original_url=link)
-                    new_hash = drive_md5 if drive_md5 else hashlib.sha256(final_bytes).hexdigest()
+                    new_hash = hashlib.sha256(final_bytes).hexdigest()
                     
                     if last_record and new_hash == getattr(last_record, f"{doc_type}_hash"):
+                        # Double-check: if the PDF byte hash is actually the same, skip versioning
                         results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                         results[doc_type]['hash'] = new_hash
                         results[doc_type]['bin'] = b''
@@ -275,14 +277,16 @@ class ArchivalEngine:
                     os.rename(temp_path, final_path)
                     results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
                 except Exception as e:
-                    # --- VAULT-FIRST RESILIENCE ---
-                    # If download fails but we have an old copy, REUSE IT.
+                    # --- RESILIENCE ONLY FOR FAILURES, NOT UPDATES ---
                     if last_record and getattr(last_record, f"{doc_type}_local_path"):
-                        logger.info(f"   [RESILIENCE] {doc_type.upper()} download failed, REUSING Vault copy.")
+                        # If download failed but a change WAS detected, this is bad. 
+                        # We use the old file so the registry doesn't crash, but we must warn the user.
+                        logger.warning(f"   [RESILIENCE] {doc_type.upper()} update failed, using old version.")
                         results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                         results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                         results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
                         recovered_from_vault += 1
+                        error_msg += f"{doc_type.upper()}: Update failed, reused old file; "
                     else:
                         raise e
 
@@ -293,7 +297,6 @@ class ArchivalEngine:
             if last_record: return {'status': 'unchanged', 'version': last_record.version}
             else: return {'status': 'failed', 'error': error_msg.strip()}
 
-        # Even if we recovered from vault, if we have files, it is at least 'partial' success
         status = "partial" if error_msg else "archived"
         current_version = (last_record.version if last_record else 0) + 1
 
@@ -307,7 +310,7 @@ class ArchivalEngine:
                 project_id=project_id, project_title=project_title, academic_year=academic_year,
                 workbook_name=workbook_name, archived_by=archived_by, batch_id=batch_id,
                 status=status, version=current_version, archived_at=datetime.datetime.utcnow(),
-                error_message=f"{error_msg.strip()} (Resilient Mode)".strip() if recovered_from_vault > 0 else error_msg.strip(),
+                error_message=error_msg.strip(),
                 srs_original_url=project_data.get('srs_link'), sdd_original_url=project_data.get('sdd_link'),
                 spmp_original_url=project_data.get('spmp_link'), std_original_url=project_data.get('std_link'),
                 ri_original_url=project_data.get('ri_link'), research_paper_original_url=project_data.get('research_paper_link'),
@@ -337,7 +340,6 @@ class ArchivalEngine:
             db.session.commit()
             return {'status': status, 'version': current_version, 'error': error_msg.strip()}
         except Exception as e:
-            logger.warning(f"DATABASE OVERLOAD. STRIPPING BINARIES...")
             db.session.rollback()
             try:
                 disk_entry = ArchivalLedger(
