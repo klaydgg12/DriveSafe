@@ -205,13 +205,20 @@ const ArchiveAnalyticsPage = () => {
                       <div key={sh.name} className="ml-2 md:ml-4 border-l-2 border-slate-100 pl-4 space-y-3">
                         <button 
                           onClick={() => toggleSheet(wb.name, sh.name)}
-                          className="flex items-center gap-2 text-sm font-bold text-slate-600 hover:text-indigo-600 transition-colors"
+                          className="w-full flex items-center justify-between group/sh py-2 pr-4 hover:bg-indigo-50/50 rounded-xl transition-all"
                         >
-                          <Folder size={16} className="text-slate-400" />
-                          {sh.name}
-                          <span className="text-[10px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded ml-1">
-                            {sh.transactions.length} SESSIONS
-                          </span>
+                          <div className="flex items-center gap-2 text-sm font-bold text-slate-600 group-hover/sh:text-indigo-600 transition-colors">
+                            <Folder size={16} className="text-slate-400 group-hover/sh:text-indigo-500" />
+                            {sh.name}
+                            <span className="text-[10px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded ml-1 group-hover/sh:bg-indigo-100 group-hover/sh:text-indigo-600">
+                              {sh.transactions.length} SESSIONS
+                            </span>
+                          </div>
+                          {expandedSheets.has(`${wb.name}-${sh.name}`) ? (
+                            <ChevronDown size={18} className="text-slate-400 group-hover/sh:text-indigo-500" />
+                          ) : (
+                            <ChevronRight size={18} className="text-slate-400 group-hover/sh:text-indigo-500" />
+                          )}
                         </button>
 
                         {expandedSheets.has(`${wb.name}-${sh.name}`) && (
