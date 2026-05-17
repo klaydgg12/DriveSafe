@@ -9,7 +9,8 @@ import time
 import requests
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
-from oauth2client.service_account import Credentials
+from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from models import db, ArchivalLedger
 
 # AI Imports
