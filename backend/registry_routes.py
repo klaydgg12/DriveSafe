@@ -249,8 +249,8 @@ def get_grouped_ledger():
                 path = getattr(r, f"{doc_type}_local_path")
                 current_hash = getattr(r, f"{doc_type}_hash")
                 
-                # Include as a version if it has a path OR it was a failed archival attempt
-                if path or r.status == 'failed':
+                # ONLY include as a version if it has a physical path in the vault
+                if path:
                     doc_versions[pid_safe][doc_type] += 1
                     target["documents"][doc_type].append({
                         "id": int(r.id),
