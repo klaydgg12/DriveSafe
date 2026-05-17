@@ -33,23 +33,44 @@ def force_fix():
 
     try:
         with connection.cursor() as cursor:
-            # List of all columns that SHOULD exist
+            # Full list of all columns across all updates
             required_columns = [
                 ('batch_id', 'VARCHAR(50)'),
+                ('archived_by', 'VARCHAR(120)'),
                 ('drive_modified_time', 'VARCHAR(100)'),
+                
+                # New Deliverables
+                ('research_paper_original_url', 'VARCHAR(500)'),
+                ('usability_test_original_url', 'VARCHAR(500)'),
+                ('presentation_original_url', 'VARCHAR(500)'),
                 ('source_code_original_url', 'VARCHAR(500)'),
                 ('github_original_url', 'VARCHAR(500)'),
                 ('database_original_url', 'VARCHAR(500)'),
                 ('readme_original_url', 'VARCHAR(500)'),
+                
+                ('research_paper_local_path', 'VARCHAR(500)'),
+                ('usability_test_local_path', 'VARCHAR(500)'),
+                ('presentation_local_path', 'VARCHAR(500)'),
                 ('source_code_local_path', 'VARCHAR(500)'),
                 ('database_local_path', 'VARCHAR(500)'),
                 ('readme_local_path', 'VARCHAR(500)'),
+                
+                ('research_paper_hash', 'VARCHAR(64)'),
+                ('usability_test_hash', 'VARCHAR(64)'),
+                ('presentation_hash', 'VARCHAR(64)'),
                 ('source_code_hash', 'VARCHAR(64)'),
                 ('database_hash', 'VARCHAR(64)'),
                 ('readme_hash', 'VARCHAR(64)'),
+                
+                ('research_paper_binary', 'LONGBLOB'),
+                ('usability_test_binary', 'LONGBLOB'),
+                ('presentation_binary', 'LONGBLOB'),
                 ('source_code_binary', 'LONGBLOB'),
                 ('database_binary', 'LONGBLOB'),
                 ('readme_binary', 'LONGBLOB'),
+                
+                ('research_paper_text', 'TEXT'),
+                ('usability_test_text', 'TEXT'),
                 ('readme_text', 'TEXT')
             ]
 

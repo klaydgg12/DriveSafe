@@ -58,15 +58,18 @@ class RegistrySheetsService:
                 'student_id': ['id number', 'student number'],
                 'project_title': ['project title', 'title'],
                 'student_name': ['student name'],
-                'srs_link': ['1. srs'],
-                'spmp_link': ['2. spmp'],
-                'sdd_link': ['3. sdd'],
-                'std_link': ['4. std'],
+                'srs_link': ['software requirements specification', 'srs'],
+                'sdd_link': ['software design description', 'sdd'],
+                'spmp_link': ['software project management plan', 'spmp'],
+                'std_link': ['software test document', 'std'],
                 'ri_link': ['requirements inventory', 'ri file'],
-                'source_code_link': ['5. source code'],
-                'github_link': ['6. source code (github)'],
-                'database_link': ['7. exported / dumped database'],
-                'readme_link': ['8. readme']
+                'research_paper_link': ['research paper', 'acm format'],
+                'usability_test_link': ['usability test results', 'usability'],
+                'presentation_link': ['final presentation', 'presentation ppt', 'ppt'],
+                'source_code_link': ['source code', 'zipped'],
+                'github_link': ['github'],
+                'database_link': ['dumped database', 'sql dump'],
+                'readme_link': ['readme']
             }
             for key, synonyms in keywords.items():
                 for i, header in enumerate(headers):

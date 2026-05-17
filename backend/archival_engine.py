@@ -128,8 +128,8 @@ class ArchivalEngine:
                         raise Exception("File too large for Google to convert. Please upload as a PDF directly.")
                     raise e
 
-            # CASE B: MS Office (.docx, .xlsx) or Markdown (.md) - High-Fidelity Conversion
-            elif 'officedocument.wordprocessingml.document' in mime_type or file_name.lower().endswith('.md') or 'markdown' in mime_type:
+            # CASE B: MS Office (.docx, .xlsx, .pptx) or Markdown (.md) - High-Fidelity Conversion
+            elif 'officedocument' in mime_type or file_name.lower().endswith('.md') or 'markdown' in mime_type:
                 logger.info(f"Performing High-Fidelity PDF conversion for {file_name}...")
                 
                 # Download raw bytes first
@@ -139,10 +139,16 @@ class ArchivalEngine:
                 while not done:
                     _, done = downloader.next_chunk()
                 
-                # Upload as temporary Google Doc for conversion
+                # Determine target upload mime
+                if 'wordprocessingml.document' in mime_type: target_mime = 'application/vnd.google-apps.document'
+                elif 'spreadsheetml.sheet' in mime_type: target_mime = 'application/vnd.google-apps.spreadsheet'
+                elif 'presentationml.presentation' in mime_type: target_mime = 'application/vnd.google-apps.presentation'
+                else: target_mime = 'application/vnd.google-apps.document'
+
+                # Upload as temporary Google asset for conversion
                 temp_meta = {
                     'name': f"DRIVESAFE_CONV_{int(time.time())}",
-                    'mimeType': 'application/vnd.google-apps.document'
+                    'mimeType': target_mime
                 }
                 upload_mime = 'text/plain' if file_name.lower().endswith('.md') else mime_type
                 
@@ -173,10 +179,6 @@ class ArchivalEngine:
             data = final_fh.getvalue()
             if not data: raise Exception("Downloaded file is empty")
             
-            # Safety: If we saved to a .pdf path, verify it's a PDF
-            if destination_path.lower().endswith('.pdf') and not data.startswith(b'%PDF-'):
-                logger.warning(f"Corrupted conversion detected for {file_name}. Retrying raw download.")
-
             with open(destination_path, 'wb') as f:
                 f.write(data)
             
@@ -201,11 +203,12 @@ class ArchivalEngine:
         base_project_dir = os.path.join(self.archive_root, workbook_name, folder_name)
         os.makedirs(base_project_dir, exist_ok=True)
         
+        # Get the latest version in the vault
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id, academic_year=academic_year, status='archived'
         ).order_by(ArchivalLedger.version.desc()).first()
         
-        doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'database', 'readme']
+        doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'presentation', 'source_code', 'database', 'readme']
         results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': None, 'ts': None, 'text': None} for dt in doc_types}
         total_changed = 0
         error_msg = ""
@@ -265,7 +268,7 @@ class ArchivalEngine:
 
                 results[doc_type]['hash'] = metadata.get('md5Checksum') or hashlib.sha256(file_binary).hexdigest()
                 
-                if doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'readme']:
+                if doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'readme']:
                     results[doc_type]['text'] = self._extract_text_from_pdf(temp_path)
 
                 # Semantic Merge
@@ -323,24 +326,52 @@ class ArchivalEngine:
                 archived_by=archived_by,
                 srs_original_url=project_data.get('srs_link'), sdd_original_url=project_data.get('sdd_link'),
                 spmp_original_url=project_data.get('spmp_link'), std_original_url=project_data.get('std_link'),
-                ri_original_url=project_data.get('ri_link'), source_code_original_url=project_data.get('source_code_link'),
-                github_original_url=project_data.get('github_link'), database_original_url=project_data.get('database_link'),
+                ri_original_url=project_data.get('ri_link'), 
+                research_paper_original_url=project_data.get('research_paper_link'),
+                usability_test_original_url=project_data.get('usability_test_link'),
+                presentation_original_url=project_data.get('presentation_link'),
+                source_code_original_url=project_data.get('source_code_link'), 
+                github_original_url=project_data.get('github_link'), 
+                database_original_url=project_data.get('database_link'),
                 readme_original_url=project_data.get('readme_link'),
+                
                 srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
                 spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
-                ri_local_path=results['ri']['path'], source_code_local_path=results['source_code']['path'],
-                database_local_path=results['database']['path'], readme_local_path=results['readme']['path'],
+                ri_local_path=results['ri']['path'],
+                research_paper_local_path=results['research_paper']['path'],
+                usability_test_local_path=results['usability_test']['path'],
+                presentation_local_path=results['presentation']['path'],
+                source_code_local_path=results['source_code']['path'], 
+                database_local_path=results['database']['path'], 
+                readme_local_path=results['readme']['path'],
+                
                 srs_hash=results['srs']['hash'], sdd_hash=results['sdd']['hash'],
                 spmp_hash=results['spmp']['hash'], std_hash=results['std']['hash'],
-                ri_hash=results['ri']['hash'], source_code_hash=results['source_code']['hash'],
-                database_hash=results['database']['hash'], readme_hash=results['readme']['hash'],
+                ri_hash=results['ri']['hash'],
+                research_paper_hash=results['research_paper']['hash'],
+                usability_test_hash=results['usability_test']['hash'],
+                presentation_hash=results['presentation']['hash'],
+                source_code_hash=results['source_code']['hash'], 
+                database_hash=results['database']['hash'], 
+                readme_hash=results['readme']['hash'],
+                
                 srs_binary=results['srs']['bin'], sdd_binary=results['sdd']['bin'],
                 spmp_binary=results['spmp']['bin'], std_binary=results['std']['bin'],
-                ri_binary=results['ri']['bin'], source_code_binary=results['source_code']['bin'],
-                database_binary=results['database']['bin'], readme_binary=results['readme']['bin'],
+                ri_binary=results['ri']['bin'],
+                research_paper_binary=results['research_paper']['bin'],
+                usability_test_binary=results['usability_test']['bin'],
+                presentation_binary=results['presentation']['bin'],
+                source_code_binary=results['source_code']['bin'], 
+                database_binary=results['database']['bin'], 
+                readme_binary=results['readme']['bin'],
+                
                 srs_text=results['srs']['text'], sdd_text=results['sdd']['text'],
                 spmp_text=results['spmp']['text'], std_text=results['std']['text'],
-                ri_text=results['ri']['text'], readme_text=results['readme']['text'],
+                ri_text=results['ri']['text'], 
+                research_paper_text=results['research_paper']['text'],
+                usability_test_text=results['usability_test']['text'],
+                readme_text=results['readme']['text'],
+                
                 status=status, version=current_version, batch_id=batch_id,
                 error_message=error_msg.strip(), archived_at=datetime.datetime.utcnow()
             )
