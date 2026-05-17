@@ -348,9 +348,7 @@ def archive_selected():
         
         if not to_process: return
 
-        # NO LONGER UPDATING GOOGLE SHEETS
-        # The system is now 100% database-driven for status tracking.
-
+        # System is now 100% database-driven for status tracking.
         with ThreadPoolExecutor(max_workers=8) as executor:
             def process_single_project(p):
                 tracker_key = f"{sid}_{p['academic_year']}_{p['row_index']}"
@@ -358,16 +356,40 @@ def archive_selected():
                     try:
                         import time, random
                         time.sleep(random.uniform(0.1, 2.0))
-                        # Use force_user=True in the background thread too
+                        
+                        # 1. AUTH CHECK
+                        if not creds:
+                             raise Exception("Authentication Lost: Please log in again.")
+
+                        # 2. INIT SERVICES
                         _, engine = get_services(requested_sheet_id=sid, provided_user_creds=creds, force_user=True)
+                        
+                        # 3. RUN ARCHIVAL
                         result = engine.archive_project(p, workbook_name=wb_name, batch_id=batch_id, archived_by=archived_by_email)
                         status = result['status'].capitalize()
                         if result['status'] == 'unchanged': status = 'Archived'
                         LIVE_STATUS_TRACKER[tracker_key] = status
                         return True
                     except Exception as e:
-                        logger.error(f"Failed to process {p.get('project_title')}: {e}")
+                        logger.error(f"BACKGROUND ERROR for {p.get('project_title')}: {e}")
                         LIVE_STATUS_TRACKER[tracker_key] = "Failed"
+                        
+                        # CRITICAL: Even if the engine crashes, save the error to DB!
+                        try:
+                            from models import ArchivalLedger, db
+                            fail_entry = ArchivalLedger(
+                                project_id=p['project_id'], 
+                                project_title=p.get('project_title', 'Untitled'),
+                                academic_year=p['academic_year'],
+                                workbook_name=wb_name,
+                                status='failed',
+                                error_message=f"Initialization/System Error: {str(e)}",
+                                archived_at=datetime.datetime.utcnow()
+                            )
+                            db.session.add(fail_entry)
+                            db.session.commit()
+                        except: 
+                            db.session.rollback()
                         return False
                     finally:
                         db.session.remove()

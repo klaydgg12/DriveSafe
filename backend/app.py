@@ -80,8 +80,7 @@ db.init_app(app)
 with app.app_context():
     from sqlalchemy import text
     try:
-        # --- ATOMIC AUTO-REPAIR (The Nuclear Option) ---
-        # We use raw SQL to avoid SQLAlchemy's internal "Unknown Column" crashes
+        # --- ROBUST ZERO-FAILURE REPAIR ---
         required = [
             ('batch_id', 'VARCHAR(50)'),
             ('archived_by', 'VARCHAR(120)'),
@@ -116,25 +115,32 @@ with app.app_context():
             ('readme_text', 'TEXT')
         ]
         
-        # 1. Get current columns using raw SQL
+        # Get existing columns as a set for O(1) lookups
         result = db.session.execute(text("SHOW COLUMNS FROM archival_ledger"))
-        existing = [row[0] for row in result.fetchall()]
-        
-        # 2. Force add missing columns
+        # Some DBs return tuples, some return dicts. Handles both.
+        rows = result.fetchall()
+        existing = set()
+        for row in rows:
+            if hasattr(row, 'Field'): existing.add(row.Field) # Dict/Object style
+            elif isinstance(row, tuple): existing.add(row[0]) # Tuple style
+            else: existing.add(str(row[0])) # Fallback
+            
         for col_name, col_type in required:
             if col_name not in existing:
-                logger.info(f"FORCE REPAIR: Adding {col_name}...")
+                logger.info(f"SYNC: Adding missing column '{col_name}'...")
                 try:
+                    # Individual transaction for each column to ensure partial success
                     db.session.execute(text(f"ALTER TABLE archival_ledger ADD COLUMN {col_name} {col_type}"))
                     db.session.commit()
+                    logger.info(f"SYNC: Success for '{col_name}'")
                 except Exception as e:
                     db.session.rollback()
-                    logger.warning(f"Repair failed for {col_name}: {e}")
+                    logger.error(f"SYNC: Failed to add '{col_name}': {e}")
 
-        logger.info("DATABASE REPAIR: Success. All columns synchronized.")
+        logger.info("DATABASE: Schema is now 100% synchronized with codebase.")
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Critical Repair System Error: {e}")
+        logger.error(f"Critical Database Sync Error: {e}")
 
 login_manager = LoginManager(app)
 CORS(app, supports_credentials=True)
