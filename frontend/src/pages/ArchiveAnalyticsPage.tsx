@@ -140,7 +140,7 @@ const ArchiveAnalyticsPage = () => {
     <div className="min-h-screen bg-[#f8fafc] flex flex-col font-sans">
       {/* Navbar */}
       <nav className="bg-white border-b border-slate-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-[1600px] mx-auto px-8 md:px-12 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button onClick={() => window.location.hash = "dashboard"} className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
               <ArrowLeft size={20} className="text-slate-500" />
@@ -167,7 +167,7 @@ const ArchiveAnalyticsPage = () => {
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto w-full p-6 space-y-6">
+      <main className="max-w-[1600px] mx-auto w-full p-8 md:p-12 space-y-8">
         {/* Header Section */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>

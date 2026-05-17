@@ -76,10 +76,10 @@ const FeaturesPage = () => {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans transition-colors duration-300">
       <nav className="bg-white border-b border-gray-100 sticky top-0 z-50 transition-all">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="max-w-[1600px] mx-auto px-8 md:px-12 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.location.hash = ""}>
             <Logo size={40} />
-            <span className="text-xl font-bold text-gray-900 tracking-tight ml-1 uppercase">DriveSafe</span>
+            <span className="text-xl font-bold text-gray-900 tracking-tight uppercase">DriveSafe</span>
           </div>
           <div className="hidden md:flex items-center gap-6 text-sm font-medium text-gray-600 uppercase tracking-widest">
             <a href="#" className="hover:text-indigo-600 transition-colors">Home</a>
@@ -93,9 +93,9 @@ const FeaturesPage = () => {
             </button>
           </div>
         </div>
-      </nav>
+        </nav>
 
-      <main className="flex-1 max-w-7xl mx-auto w-full p-6 md:p-10 space-y-16">
+        <main className="flex-1 max-w-[1600px] mx-auto w-full p-8 md:p-12 space-y-16">
         <div className="text-center space-y-4 pt-10">
             <h1 className="text-4xl md:text-5xl font-black text-gray-900 tracking-tight uppercase">Powerful Features</h1>
             <p className="text-xl text-gray-500 font-medium">Everything you need for institutional archival integrity</p>

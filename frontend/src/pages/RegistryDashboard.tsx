@@ -292,7 +292,7 @@ const RegistryDashboard: React.FC = () => {
             )}
             
             <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-50 transition-all shadow-sm">
-                <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between gap-4">
+                <div className="max-w-[1600px] mx-auto px-6 md:px-12 h-16 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3 shrink-0">
                         <button onClick={() => window.location.hash = "dashboard"} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all">
                             <ArrowLeft className="w-4 h-4" />
@@ -345,7 +345,7 @@ const RegistryDashboard: React.FC = () => {
                 </div>
             </header>
 
-            <main className="max-w-7xl mx-auto w-full p-4 md:p-6 space-y-4">
+            <main className="max-w-[1600px] mx-auto w-full p-6 md:p-12 space-y-6">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="flex flex-wrap items-center gap-2">
                         <div className="relative group min-w-[200px] md:min-w-[280px]">
@@ -406,9 +406,9 @@ const RegistryDashboard: React.FC = () => {
                                             {paginatedProjects.length > 0 && paginatedProjects.every(p => selectedRows.includes(p.row_index)) ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4 text-slate-200" />}
                                         </button>
                                     </th>
-                                    <th onClick={() => handleSort('project_id')} className="px-4 py-4 cursor-pointer group whitespace-nowrap w-24">
+                                    <th onClick={() => handleSort('project_id')} className="px-4 py-4 cursor-pointer group whitespace-nowrap w-32">
                                         <div className="flex items-center gap-2">
-                                            <span className="text-[10px] font-black text-slate-400 tracking-[0.2em] uppercase">ID</span>
+                                            <span className="text-[10px] font-black text-slate-400 tracking-[0.2em] uppercase">TEAM CODE</span>
                                             {renderSortIcon('project_id')}
                                         </div>
                                     </th>

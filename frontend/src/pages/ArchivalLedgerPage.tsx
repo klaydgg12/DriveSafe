@@ -176,8 +176,8 @@ const ArchivalLedgerPage = () => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans transition-colors duration-300 overflow-x-hidden">
       {/* Header */}
-      <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 transition-colors shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between gap-4">
+      <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 transition-all shadow-sm">
+        <div className="max-w-[1600px] mx-auto px-8 md:px-12 h-16 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 shrink-0">
             <button onClick={() => window.location.hash = "dashboard"} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-slate-50 rounded-xl transition-all">
               <ArrowLeft size={20} />
@@ -235,7 +235,7 @@ const ArchivalLedgerPage = () => {
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto w-full p-4 md:p-6 flex-1 space-y-6">
+      <main className="max-w-[1600px] mx-auto w-full p-6 md:p-12 flex-1 space-y-8">
         {/* Controls Bar */}
         <div className="flex flex-col md:flex-row gap-4">
           <div className="relative group flex-1">

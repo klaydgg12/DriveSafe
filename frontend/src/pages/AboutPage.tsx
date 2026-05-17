@@ -5,7 +5,7 @@ const AboutPage = () => {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans transition-colors duration-300">
       <nav className="bg-white border-b border-gray-100 sticky top-0 z-50 transition-all">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-[1600px] mx-auto px-8 md:px-12 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.location.hash = ""}>
             <Logo size={40} />
             <span className="text-xl font-bold text-gray-900 tracking-tight uppercase">DriveSafe</span>
@@ -24,7 +24,7 @@ const AboutPage = () => {
         </div>
       </nav>
 
-      <main className="flex-1 max-w-7xl mx-auto w-full p-6 md:p-10 space-y-16">
+      <main className="flex-1 max-w-[1600px] mx-auto w-full p-8 md:p-12 space-y-16">
         <div className="text-center space-y-4 pt-10">
             <div className="inline-flex items-center gap-2 bg-indigo-50 px-4 py-1.5 rounded-full text-indigo-700 text-xs font-black uppercase tracking-widest">
                 Academic Project

@@ -20,7 +20,7 @@ const HomePage = () => {
 
       {/* Navigation (Glassmorphism) */}
       <nav className="bg-white/70 backdrop-blur-lg border-b border-gray-200/50 sticky top-0 z-50 transition-all">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Logo size={50} />
             <span className="text-xl font-black text-gray-900 tracking-tight ml-1 uppercase">DriveSafe</span>
@@ -42,7 +42,7 @@ const HomePage = () => {
       {/* Hero Section */}
       <main className="flex-1 relative z-10">
         <section className="py-24 px-6 relative">
-          <div className="max-w-7xl mx-auto text-center space-y-8">
+          <div className="max-w-[1600px] mx-auto text-center space-y-8">
             <div className="inline-flex items-center gap-2 bg-white/60 backdrop-blur-sm border border-indigo-100 px-5 py-2 rounded-full text-indigo-700 text-xs font-black uppercase tracking-widest shadow-sm">
               <span className="flex h-2 w-2 rounded-full bg-indigo-500 animate-pulse"></span>
               Free for Students & Educators
@@ -85,7 +85,7 @@ const HomePage = () => {
 
         {/* Features Preview */}
         <section id="features" className="py-24 bg-white/50 backdrop-blur-3xl border-y border-gray-200/50">
-          <div className="max-w-7xl mx-auto px-6">
+          <div className="max-w-[1600px] mx-auto px-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               <div className="p-8 rounded-[2.5rem] bg-white border border-gray-100 shadow-sm hover:shadow-2xl hover:border-indigo-100 hover:-translate-y-2 transition-all duration-500 group">
                 <div className="w-14 h-14 bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl flex items-center justify-center text-indigo-600 mb-6 group-hover:scale-110 group-hover:rotate-3 transition-transform duration-300 shadow-inner">
@@ -122,7 +122,7 @@ const HomePage = () => {
 
         {/* Trusted By */}
         <section className="py-24 px-6">
-          <div className="max-w-7xl mx-auto text-center space-y-10">
+          <div className="max-w-[1600px] mx-auto text-center space-y-10">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.3em]">Trusted by students and educators at</p>
             <div className="flex justify-center">
               <div className="bg-white/80 backdrop-blur-md px-10 py-5 rounded-2xl border border-gray-200/50 shadow-lg shadow-gray-200/20 text-gray-800 font-black tracking-tighter text-2xl md:text-3xl hover:scale-105 transition-transform duration-500 cursor-default">
