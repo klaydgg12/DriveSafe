@@ -49,7 +49,7 @@ class ArchivalEngine:
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v6 Initialized ({self.identity_label})")
+        logger.info(f"ArchivalEngine Master v7 Initialized ({self.identity_label})")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -316,7 +316,11 @@ class ArchivalEngine:
                 ri_binary=safe_bin('ri'), research_paper_binary=safe_bin('research_paper'),
                 usability_test_binary=safe_bin('usability_test'), presentation_binary=safe_bin('presentation'),
                 source_code_binary=safe_bin('source_code'), database_binary=safe_bin('database'),
-                readme_binary=safe_bin('readme')
+                readme_binary=safe_bin('readme'),
+                srs_text=results['srs']['text'], sdd_text=results['sdd']['text'],
+                spmp_text=results['spmp']['text'], std_text=results['std']['text'],
+                ri_text=results['ri']['text'], research_paper_text=results['research_paper']['text'],
+                usability_test_text=results['usability_test']['text'], readme_text=results['readme']['text']
             )
             db.session.add(entry)
             db.session.commit()
