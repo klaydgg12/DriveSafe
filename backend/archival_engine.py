@@ -144,18 +144,13 @@ class ArchivalEngine:
 
     def download_file(self, file_id, destination_path):
         try:
-            # 1. ATTEMPT WITH TEACHER IDENTITY (API)
-            try:
-                file_metadata = self.service.files().get(fileId=file_id, fields='mimeType, name').execute()
-                mime_type = file_metadata.get('mimeType', '')
-                file_name = file_metadata.get('name', 'unknown')
-            except Exception as api_meta_err:
-                if "403" in str(api_meta_err):
-                    logger.info(f"[{self.identity_label}] Metadata 403. Switching to Public Fallback...")
-                    return self._public_download_fallback(file_id, destination_path)
-                raise api_meta_err
-
+            # 1. Get metadata to determine type
+            file_metadata = self.service.files().get(fileId=file_id, fields='mimeType, name').execute()
+            mime_type = file_metadata.get('mimeType', '')
+            file_name = file_metadata.get('name', 'unknown')
+            
             logger.info(f"[{self.identity_label}] Downloading: {file_name} ({mime_type})")
+
             final_fh = io.BytesIO()
             
             # CASE A: Native Google Doc/Sheet
@@ -184,8 +179,13 @@ class ArchivalEngine:
                         return self._public_download_fallback(file_id, destination_path)
                     raise e
 
+            # --- VALIDATION ---
+            data = final_fh.getvalue()
+            if not data: raise Exception("Downloaded file is empty")
+            
             with open(destination_path, 'wb') as f:
-                f.write(final_fh.getvalue())
+                f.write(data)
+            
             return destination_path
         except Exception as e:
             logger.error(f"Download Error for {file_id}: {e}")
@@ -357,90 +357,89 @@ class ArchivalEngine:
         status = "partial" if error_msg and total_changed > 0 else ("failed" if error_msg else "archived")
         current_version = (last_record.version if last_record else 0) + (1 if status in ["archived", "partial"] else 0)
 
-        # --- SMART BINARY CAP (Fixes MySQL Gone Away) ---
-        # MariaDB default limit is often 16MB. We cap at 15MB to be safe.
-        MAX_BIN_SIZE = 15 * 1024 * 1024 
-        
-        def safe_bin(doc_type):
-            b = results[doc_type]['bin']
-            if b and len(b) > MAX_BIN_SIZE:
-                logger.warning(f"SKIPPING DB STORAGE for {doc_type.upper()}: File is {len(b)} bytes (Exceeds 15MB Cap). Local file is still safe.")
-                return None
-            return b
-
+        # --- SUCCESS-FIRST SAVE PROTOCOL ---
+        # 1. Attempt full save with binaries
         try:
+            MAX_BIN_SIZE = 15 * 1024 * 1024 
+            def safe_bin(doc_type):
+                b = results[doc_type]['bin']
+                return b if b and len(b) <= MAX_BIN_SIZE else None
+
             ledger_entry = ArchivalLedger(
-                project_id=project_id, project_title=project_title,
-                academic_year=academic_year, workbook_name=workbook_name,
-                archived_by=archived_by,
+                project_id=project_id, project_title=project_title, academic_year=academic_year,
+                workbook_name=workbook_name, archived_by=archived_by, batch_id=batch_id,
+                status=status, version=current_version, archived_at=datetime.datetime.utcnow(),
+                error_message=error_msg.strip(),
                 srs_original_url=project_data.get('srs_link'), sdd_original_url=project_data.get('sdd_link'),
                 spmp_original_url=project_data.get('spmp_link'), std_original_url=project_data.get('std_link'),
-                ri_original_url=project_data.get('ri_link'), 
-                research_paper_original_url=project_data.get('research_paper_link'),
-                usability_test_original_url=project_data.get('usability_test_link'),
-                presentation_original_url=project_data.get('presentation_link'),
-                source_code_original_url=project_data.get('source_code_link'), 
-                github_original_url=project_data.get('github_link'), 
-                database_original_url=project_data.get('database_link'),
-                readme_original_url=project_data.get('readme_link'),
-                
+                ri_original_url=project_data.get('ri_link'), research_paper_original_url=project_data.get('research_paper_link'),
+                usability_test_original_url=project_data.get('usability_test_link'), presentation_original_url=project_data.get('presentation_link'),
+                source_code_original_url=project_data.get('source_code_link'), github_original_url=project_data.get('github_link'),
+                database_original_url=project_data.get('database_link'), readme_original_url=project_data.get('readme_link'),
                 srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
                 spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
-                ri_local_path=results['ri']['path'],
-                research_paper_local_path=results['research_paper']['path'],
-                usability_test_local_path=results['usability_test']['path'],
-                presentation_local_path=results['presentation']['path'],
-                source_code_local_path=results['source_code']['path'], 
-                database_local_path=results['database']['path'], 
+                ri_local_path=results['ri']['path'], research_paper_local_path=results['research_paper']['path'],
+                usability_test_local_path=results['usability_test']['path'], presentation_local_path=results['presentation']['path'],
+                source_code_local_path=results['source_code']['path'], database_local_path=results['database']['path'],
                 readme_local_path=results['readme']['path'],
-                
                 srs_hash=results['srs']['hash'], sdd_hash=results['sdd']['hash'],
                 spmp_hash=results['spmp']['hash'], std_hash=results['std']['hash'],
-                ri_hash=results['ri']['hash'],
-                research_paper_hash=results['research_paper']['hash'],
-                usability_test_hash=results['usability_test']['hash'],
-                presentation_hash=results['presentation']['hash'],
-                source_code_hash=results['source_code']['hash'], 
-                database_hash=results['database']['hash'], 
+                ri_hash=results['ri']['hash'], research_paper_hash=results['research_paper']['hash'],
+                usability_test_hash=results['usability_test']['hash'], presentation_hash=results['presentation']['hash'],
+                source_code_hash=results['source_code']['hash'], database_hash=results['database']['hash'],
                 readme_hash=results['readme']['hash'],
-                
-                # Use the SAFE BINARY helper to avoid crashing the DB
                 srs_binary=safe_bin('srs'), sdd_binary=safe_bin('sdd'),
                 spmp_binary=safe_bin('spmp'), std_binary=safe_bin('std'),
-                ri_binary=safe_bin('ri'),
-                research_paper_binary=safe_bin('research_paper'),
-                usability_test_binary=safe_bin('usability_test'),
-                presentation_binary=safe_bin('presentation'),
-                source_code_binary=safe_bin('source_code'), 
-                database_binary=safe_bin('database'), 
+                ri_binary=safe_bin('ri'), research_paper_binary=safe_bin('research_paper'),
+                usability_test_binary=safe_bin('usability_test'), presentation_binary=safe_bin('presentation'),
+                source_code_binary=safe_bin('source_code'), database_binary=safe_bin('database'),
                 readme_binary=safe_bin('readme'),
-                
                 srs_text=results['srs']['text'], sdd_text=results['sdd']['text'],
                 spmp_text=results['spmp']['text'], std_text=results['std']['text'],
-                ri_text=results['ri']['text'], 
-                research_paper_text=results['research_paper']['text'],
-                usability_test_text=results['usability_test']['text'],
-                readme_text=results['readme']['text'],
-                
-                status=status, version=current_version, batch_id=batch_id,
-                error_message=error_msg.strip(), archived_at=datetime.datetime.utcnow()
+                ri_text=results['ri']['text'], research_paper_text=results['research_paper']['text'],
+                usability_test_text=results['usability_test']['text'], readme_text=results['readme']['text']
             )
             db.session.add(ledger_entry)
             db.session.commit()
-        except Exception as save_err:
-            logger.error(f"CRITICAL DATABASE ERROR: {save_err}")
+        except Exception as e:
+            # 2. RETRY WITHOUT BINARIES (Disk-Only strategy)
+            logger.warning(f"DATABASE OVERLOAD for {project_title}. Retrying with Disk-Only strategy...")
             db.session.rollback()
-            # If it STILL fails (e.g. total row size too big), save a skeleton record
             try:
-                fail_record = ArchivalLedger(
-                    project_id=project_id, project_title=project_title,
-                    academic_year=academic_year, status='failed',
-                    error_message=f"Database Overload: Files are too large for SQL. {str(save_err)[:100]}",
-                    archived_at=datetime.datetime.utcnow()
+                disk_entry = ArchivalLedger(
+                    project_id=project_id, project_title=project_title, academic_year=academic_year,
+                    workbook_name=workbook_name, archived_by=archived_by, batch_id=batch_id,
+                    status=status, version=current_version, archived_at=datetime.datetime.utcnow(),
+                    error_message=f"{error_msg.strip()} (Note: Database binary limit exceeded; serving from VPS disk only)".strip(),
+                    srs_original_url=project_data.get('srs_link'), sdd_original_url=project_data.get('sdd_link'),
+                    spmp_original_url=project_data.get('spmp_link'), std_original_url=project_data.get('std_link'),
+                    ri_original_url=project_data.get('ri_link'), research_paper_original_url=project_data.get('research_paper_link'),
+                    usability_test_original_url=project_data.get('usability_test_link'), presentation_original_url=project_data.get('presentation_link'),
+                    source_code_original_url=project_data.get('source_code_link'), github_original_url=project_data.get('github_link'),
+                    database_original_url=project_data.get('database_link'), readme_original_url=project_data.get('readme_link'),
+                    srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
+                    spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
+                    ri_local_path=results['ri']['path'], research_paper_local_path=results['research_paper']['path'],
+                    usability_test_local_path=results['usability_test']['path'], presentation_local_path=results['presentation']['path'],
+                    source_code_local_path=results['source_code']['path'], database_local_path=results['database']['path'],
+                    readme_local_path=results['readme']['path'],
+                    srs_hash=results['srs']['hash'], sdd_hash=results['sdd']['hash'],
+                    spmp_hash=results['spmp']['hash'], std_hash=results['std']['hash'],
+                    ri_hash=results['ri']['hash'], research_paper_hash=results['research_paper']['hash'],
+                    usability_test_hash=results['usability_test']['hash'], presentation_hash=results['presentation']['hash'],
+                    source_code_hash=results['source_code']['hash'], database_hash=results['database']['hash'],
+                    readme_hash=results['readme']['hash'],
+                    srs_text=results['srs']['text'], sdd_text=results['sdd']['text'],
+                    spmp_text=results['spmp']['text'], std_text=results['std']['text'],
+                    ri_text=results['ri']['text'], research_paper_text=results['research_paper']['text'],
+                    usability_test_text=results['usability_test']['text'], readme_text=results['readme']['text']
                 )
-                db.session.add(fail_record)
+                db.session.add(disk_entry)
                 db.session.commit()
-            except: pass
-            return {'status': 'failed', 'version': current_version, 'error': f"Vault Overload. File size exceeds database limits."}
+                logger.info(f"DISK-ONLY ARCHIVAL SUCCESS for {project_title}")
+            except Exception as final_err:
+                logger.error(f"CRITICAL SYSTEM FAILURE: {final_err}")
+                db.session.rollback()
+                return {'status': 'failed', 'version': current_version, 'error': f"Critical Database Error: {str(final_err)[:50]}"}
         
         return {'status': status, 'version': current_version, 'paths': {dt: results[dt]['path'] for dt in doc_types}, 'error': error_msg.strip()}
