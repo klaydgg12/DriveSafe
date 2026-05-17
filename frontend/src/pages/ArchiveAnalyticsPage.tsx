@@ -1,355 +1,327 @@
 import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { 
-  History, Search, Filter, Calendar, BookOpen, 
-  FileText, ArrowLeft, RefreshCw,
-  Clock, Eye, ExternalLink, BarChart, Info, Trash2
+  History, Search, Folder, BookOpen, 
+  ArrowLeft, RefreshCw,
+  Clock, Eye, Trash2, ChevronRight, ChevronDown,
+  Layers, User, CheckCircle2, AlertCircle, Calendar
 } from "lucide-react";
 import Logo from "../components/Logo";
 
-interface ArchivalRecord {
+interface Project {
   id: number;
   project_id: string;
   project_title: string;
-  academic_year: string;
-  workbook_name: string;
-  archived_at: string;
   status: string;
   version: number;
-  documents: {
-    type: string;
-    exists: boolean;
-  }[];
+  error?: string;
+}
+
+interface Transaction {
+  transaction_id: string;
+  transaction_label: string;
+  timestamp: string;
+  archived_by: string;
+  project_count: number;
+  projects: Project[];
+}
+
+interface Sheet {
+  name: string;
+  transactions: Transaction[];
+}
+
+interface Workbook {
+  name: string;
+  sheets: Sheet[];
 }
 
 const ArchiveAnalyticsPage = () => {
-  const [records, setRecords] = useState<ArchivalRecord[]>([]);
+  const [workbooks, setWorkbooks] = useState<Workbook[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [yearFilter, setYearFilter] = useState("All Years");
-  const [workbookFilter, setWorkbookFilter] = useState("All Workbooks");
-  const [typeFilter, setTypeFilter] = useState("All Types");
+  const [expandedWorkbooks, setExpandedWorkbooks] = useState<Set<string>>(new Set());
+  const [expandedSheets, setExpandedSheets] = useState<Set<string>>(new Set());
+  const [expandedTransactions, setExpandedTransactions] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    fetchHistory();
+    fetchTransactions();
   }, []);
 
-  const fetchHistory = async () => {
+  const fetchTransactions = async () => {
     setLoading(true);
     try {
-      // We'll use the existing grouped endpoint but flatten it for a "Timeline" view
-      const resp = await axios.get('/api/registry/ledger/grouped', { withCredentials: true });
-      
-      const flatRecords: ArchivalRecord[] = [];
-      
-      resp.data.forEach((project: any) => {
-        // Collect all versions from all document types for this project
-        const allVersions: any[] = [];
-        
-        ['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'database', 'readme'].forEach(type => {
-          if (project.documents[type]) {
-            project.documents[type].forEach((v: any) => {
-              allVersions.push({
-                ...v,
-                doc_type: type,
-                project_id: project.project_id,
-                project_title: project.project_title,
-                academic_year: project.academic_year,
-                workbook_name: project.workbook_name || "Archives"
-              });
-            });
-          }
-        });
-
-        // Group by ID (each ArchivalLedger row is one version of a project)
-        // Since the current API groups by project, we regroup by ID to get the "Timeline"
-        const recordsById = new Map();
-        allVersions.forEach(v => {
-          if (!recordsById.has(v.id)) {
-            recordsById.set(v.id, {
-              id: v.id,
-              project_id: v.project_id,
-              project_title: v.project_title,
-              academic_year: v.academic_year,
-              workbook_name: v.workbook_name,
-              archived_at: v.timestamp,
-              status: v.status,
-              version: v.version,
-              documents: []
-            });
-          }
-          recordsById.get(v.id).documents.push({ type: v.doc_type.toUpperCase(), exists: true });
-        });
-
-        recordsById.forEach(record => flatRecords.push(record));
-      });
-
-      // Sort by date (Newest First)
-      flatRecords.sort((a, b) => new Date(b.archived_at).getTime() - new Date(a.archived_at).getTime());
-      
-      setRecords(flatRecords);
+      const resp = await axios.get('/api/registry/transactions', { withCredentials: true });
+      setWorkbooks(resp.data);
+      // Auto-expand the first workbook and sheet if they exist
+      if (resp.data.length > 0) {
+        setExpandedWorkbooks(new Set([resp.data[0].name]));
+        if (resp.data[0].sheets.length > 0) {
+          setExpandedSheets(new Set([`${resp.data[0].name}-${resp.data[0].sheets[0].name}`]));
+        }
+      }
     } catch (err) {
-      console.error("Failed to fetch history:", err);
+      console.error("Failed to fetch transactions:", err);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDelete = async (id: number, title: string) => {
-    if (!window.confirm(`Are you sure you want to permanently delete the archival record for "${title}"? This cannot be undone.`)) {
-      return;
-    }
+  const toggleWorkbook = (name: string) => {
+    const next = new Set(expandedWorkbooks);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    setExpandedWorkbooks(next);
+  };
 
+  const toggleSheet = (wb: string, sh: string) => {
+    const key = `${wb}-${sh}`;
+    const next = new Set(expandedSheets);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setExpandedSheets(next);
+  };
+
+  const toggleTransaction = (txId: string) => {
+    const next = new Set(expandedTransactions);
+    if (next.has(txId)) next.delete(txId);
+    else next.add(txId);
+    setExpandedTransactions(next);
+  };
+
+  const handleDelete = async (id: number, title: string) => {
+    if (!window.confirm(`Permanently delete record for "${title}"?`)) return;
     try {
       await axios.delete(`/api/registry/ledger/${id}`, { withCredentials: true });
-      // Update local state to remove the deleted record
-      setRecords(prev => prev.filter(r => r.id !== id));
+      fetchTransactions();
     } catch (err) {
-      console.error("Failed to delete record:", err);
-      alert("Error deleting record. Please check server logs.");
+      alert("Delete failed.");
     }
   };
 
-  const years = useMemo(() => ["All Years", ...Array.from(new Set(records.map(r => r.academic_year)))], [records]);
-  const workbooks = useMemo(() => ["All Workbooks", ...Array.from(new Set(records.map(r => r.workbook_name)))], [records]);
+  const formatFullDate = (isoString: string) => {
+    return new Date(isoString).toLocaleString('en-PH', { 
+      timeZone: 'Asia/Manila',
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    }) + " (GMT+8)";
+  };
 
-  const filteredRecords = useMemo(() => {
-    return records.filter(r => {
-      const matchesSearch = r.project_title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                           r.project_id.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesYear = yearFilter === "All Years" || r.academic_year === yearFilter;
-      const matchesWorkbook = workbookFilter === "All Workbooks" || r.workbook_name === workbookFilter;
-      const matchesType = typeFilter === "All Types" || r.documents.some(d => d.type === typeFilter);
-      
-      return matchesSearch && matchesYear && matchesWorkbook && matchesType;
-    });
-  }, [records, searchQuery, yearFilter, workbookFilter, typeFilter]);
-
-  // Statistics for the top bar
-  const stats = useMemo(() => {
-    const total = records.length;
-    const today = records.filter(r => {
-      const date = new Date(r.archived_at);
-      const now = new Date();
-      return date.toDateString() === now.toDateString();
-    }).length;
-    return { total, today };
-  }, [records]);
+  const filteredWorkbooks = useMemo(() => {
+    if (!searchQuery) return workbooks;
+    const q = searchQuery.toLowerCase();
+    return workbooks.map(wb => ({
+      ...wb,
+      sheets: wb.sheets.map(sh => ({
+        ...sh,
+        transactions: sh.transactions.map(tx => ({
+          ...tx,
+          projects: tx.projects.filter(p => 
+            p.project_title.toLowerCase().includes(q) || 
+            p.project_id.toLowerCase().includes(q) ||
+            tx.transaction_label.toLowerCase().includes(q)
+          )
+        })).filter(tx => tx.projects.length > 0)
+      })).filter(sh => sh.transactions.length > 0)
+    })).filter(wb => wb.sheets.length > 0);
+  }, [workbooks, searchQuery]);
 
   return (
     <div className="min-h-screen bg-[#f8fafc] flex flex-col font-sans">
       {/* Navbar */}
       <nav className="bg-white border-b border-slate-200 sticky top-0 z-50">
-        <div className="max-w-[1600px] mx-auto px-8 md:px-12 h-16 flex items-center justify-between">
+        <div className="max-w-[1400px] mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button onClick={() => window.location.hash = "dashboard"} className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
               <ArrowLeft size={20} className="text-slate-500" />
             </button>
             <div className="flex items-center gap-3">
-              <Logo size={35} />
-              <span className="text-lg font-bold text-slate-900 tracking-tight">Vault Analytics</span>
+              <Logo size={32} />
+              <span className="text-lg font-bold text-slate-900 tracking-tight">Archive Transactions</span>
             </div>
           </div>
-          
-          <div className="flex items-center gap-3">
-             <div className="hidden md:flex flex-col items-end mr-4">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Active Session</span>
-                <span className="text-xs font-semibold text-indigo-600">Archival History Mode</span>
-             </div>
-             <button 
-              onClick={fetchHistory}
-              className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-              title="Refresh History"
-             >
-               <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
-             </button>
-          </div>
+          <button onClick={fetchTransactions} className="p-2 text-slate-500 hover:text-indigo-600 rounded-lg transition-all">
+            <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
+          </button>
         </div>
       </nav>
 
-      <main className="max-w-[1600px] mx-auto w-full p-8 md:p-12 space-y-8">
-        {/* Header Section */}
+      <main className="max-w-[1400px] mx-auto w-full p-6 md:p-10 space-y-8">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-              <History className="text-indigo-600" /> Archival Timeline
+              <History className="text-indigo-600" /> Vault Transaction Log
             </h1>
-            <p className="text-slate-500 text-sm font-medium mt-1">Real-time tracking of all binary vault operations</p>
+            <p className="text-slate-500 text-sm font-medium mt-1">Sequential history organized by Workbook and Sheet</p>
           </div>
-
-          <div className="flex gap-3">
-            <div className="bg-white px-4 py-3 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
-              <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600">
-                <BarChart size={18} />
-              </div>
-              <div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Total Archivals</p>
-                <p className="text-lg font-black text-slate-900 leading-none">{stats.total}</p>
-              </div>
-            </div>
-            <div className="bg-white px-4 py-3 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
-              <div className="p-2 bg-emerald-50 rounded-lg text-emerald-600">
-                <Clock size={18} />
-              </div>
-              <div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Sessions Today</p>
-                <p className="text-lg font-black text-slate-900 leading-none">{stats.today}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Search and Filters Bar */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+          <div className="relative w-full md:w-96">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
             <input 
               type="text"
-              placeholder="Search by Team ID, Project Title, or Keyword..."
-              className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-medium text-slate-700"
+              placeholder="Search by team, title or transaction..."
+              className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm font-medium"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
+        </div>
 
-          <div className="flex flex-wrap gap-3">
-            <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-600">
-              <Calendar size={16} className="text-slate-400" />
-              <select 
-                className="bg-transparent outline-none text-xs font-bold"
-                value={yearFilter}
-                onChange={(e) => setYearFilter(e.target.value)}
-              >
-                {years.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-            </div>
-            <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-600">
-              <BookOpen size={16} className="text-slate-400" />
-              <select 
-                className="bg-transparent outline-none text-xs font-bold"
-                value={workbookFilter}
-                onChange={(e) => setWorkbookFilter(e.target.value)}
-              >
-                {workbooks.map(w => <option key={w} value={w}>{w}</option>)}
-              </select>
-            </div>
-            <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-600">
-              <Filter size={16} className="text-slate-400" />
-              <select 
-                className="bg-transparent outline-none text-xs font-bold"
-                value={typeFilter}
-                onChange={(e) => setTypeFilter(e.target.value)}
-              >
-                <option value="All Types">All Doc Types</option>
-                <option value="SRS">SRS Only</option>
-                <option value="SDD">SDD Only</option>
-                <option value="SPMP">SPMP Only</option>
-                <option value="STD">STD Only</option>
-                <option value="RI">RI Only</option>
-                <option value="SOURCE_CODE">Source Code Only</option>
-                <option value="DATABASE">Database Only</option>
-                <option value="README">ReadMe Only</option>
-              </select>
-            </div>
+        {loading ? (
+          <div className="py-20 flex flex-col items-center justify-center text-slate-400 space-y-4">
+            <RefreshCw size={40} className="animate-spin text-indigo-500" />
+            <p className="font-bold tracking-widest text-xs uppercase">Loading Vault Registry...</p>
           </div>
-        </div>
-
-        {/* Timeline List */}
-        <div className="space-y-4">
-          {loading ? (
-            <div className="py-20 flex flex-col items-center justify-center text-slate-400 space-y-4">
-              <RefreshCw size={40} className="animate-spin text-indigo-500" />
-              <p className="font-bold tracking-widest text-xs uppercase">Loading Timeline Data...</p>
-            </div>
-          ) : filteredRecords.length === 0 ? (
-            <div className="py-20 flex flex-col items-center justify-center text-slate-400 bg-white rounded-3xl border border-dashed border-slate-300">
-              <Info size={40} className="mb-4" />
-              <p className="font-bold">No archival history found matching your search.</p>
-              <button onClick={() => { setSearchQuery(""); setYearFilter("All Years"); }} className="mt-4 text-indigo-600 font-bold hover:underline">Clear all filters</button>
-            </div>
-          ) : (
-            filteredRecords.map((record) => (
-              <div 
-                key={record.id} 
-                className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-100 transition-all group overflow-hidden"
-              >
-                <div className="flex flex-col md:flex-row">
-                  {/* Status Indicator Bar */}
-                  <div className={`w-1.5 md:w-2 shrink-0 ${record.status === 'archived' ? 'bg-emerald-400' : 'bg-rose-400'}`}></div>
-                  
-                  <div className="flex-1 p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-                    <div className="flex items-start gap-4 flex-1">
-                      <div className="w-12 h-12 bg-slate-50 rounded-xl flex items-center justify-center shrink-0 border border-slate-100 group-hover:bg-indigo-50 group-hover:border-indigo-100 transition-colors">
-                        <History className="text-slate-400 group-hover:text-indigo-500 transition-colors" size={24} />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-[10px] font-black px-2 py-0.5 bg-slate-100 text-slate-500 rounded-md uppercase tracking-wider">TEAM {record.project_id}</span>
-                          <span className="text-[10px] font-black px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-md uppercase tracking-wider">v{record.version}</span>
-                        </div>
-                        <h3 className="text-lg font-bold text-slate-900 truncate group-hover:text-indigo-600 transition-colors">{record.project_title}</h3>
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1">
-                          <div className="flex items-center gap-1.5 text-slate-500 text-xs font-medium">
-                            <BookOpen size={14} className="text-slate-400" /> {record.workbook_name}
-                          </div>
-                          <div className="flex items-center gap-1.5 text-slate-500 text-xs font-medium">
-                            <Calendar size={14} className="text-slate-400" /> {record.academic_year}
-                          </div>
-                          <div className="flex items-center gap-1.5 text-slate-500 text-xs font-medium">
-                            <Clock size={14} className="text-slate-400" /> {new Date(record.archived_at).toLocaleString('en-PH', { 
-                              timeZone: 'Asia/Manila',
-                              weekday: 'long',
-                              year: 'numeric',
-                              month: 'long',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              second: '2-digit',
-                              hour12: true
-                            })} (GMT+8)
-                          </div>
-                        </div>
-                      </div>
+        ) : filteredWorkbooks.length === 0 ? (
+          <div className="py-20 text-center bg-white rounded-3xl border border-dashed border-slate-300">
+            <Layers size={40} className="mx-auto text-slate-300 mb-4" />
+            <p className="text-slate-500 font-bold">No archival transactions found.</p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {filteredWorkbooks.map((wb) => (
+              <div key={wb.name} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <button 
+                  onClick={() => toggleWorkbook(wb.name)}
+                  className="w-full px-6 py-4 flex items-center justify-between bg-slate-50/50 hover:bg-slate-50 transition-colors border-b border-slate-100"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg">
+                      <BookOpen size={18} />
                     </div>
-
-                    <div className="flex flex-col md:items-end gap-3 w-full md:w-auto">
-                      <div className="flex flex-wrap gap-1.5">
-                        {record.documents.map(doc => (
-                          <div key={doc.type} className="flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-600 rounded-lg border border-slate-100 text-[10px] font-bold">
-                            <FileText size={12} className="text-indigo-500" /> {doc.type}
-                          </div>
-                        ))}
-                      </div>
-                      
-                      <div className="flex gap-2">
-                        <button 
-                          onClick={() => window.open(`/api/registry/download/${record.id}/${record.documents[0].type.toLowerCase()}?preview=1`)}
-                          className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all active:scale-95"
-                        >
-                          <Eye size={14} /> View Files
-                        </button>
-                        <button 
-                          onClick={() => window.location.hash = "ledger"}
-                          className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all border border-transparent hover:border-indigo-100"
-                          title="Open in Ledger"
-                        >
-                          <ExternalLink size={16} />
-                        </button>
-                        <button 
-                          onClick={() => handleDelete(record.id, record.project_title)}
-                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all border border-transparent hover:border-rose-100"
-                          title="Delete Record"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </div>
+                    <span className="font-black text-slate-800 uppercase tracking-tight">{wb.name}</span>
                   </div>
-                </div>
+                  {expandedWorkbooks.has(wb.name) ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                </button>
+
+                {expandedWorkbooks.has(wb.name) && (
+                  <div className="p-4 space-y-4">
+                    {wb.sheets.map((sh) => (
+                      <div key={sh.name} className="ml-2 md:ml-4 border-l-2 border-slate-100 pl-4 space-y-3">
+                        <button 
+                          onClick={() => toggleSheet(wb.name, sh.name)}
+                          className="flex items-center gap-2 text-sm font-bold text-slate-600 hover:text-indigo-600 transition-colors"
+                        >
+                          <Folder size={16} className="text-slate-400" />
+                          {sh.name}
+                          <span className="text-[10px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded ml-1">
+                            {sh.transactions.length} SESSIONS
+                          </span>
+                        </button>
+
+                        {expandedSheets.has(`${wb.name}-${sh.name}`) && (
+                          <div className="space-y-4 mt-4 ml-2">
+                            {sh.transactions.map((tx) => (
+                              <div key={tx.transaction_id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden group/tx">
+                                <button 
+                                  onClick={() => toggleTransaction(tx.transaction_id)}
+                                  className="w-full px-5 py-4 flex items-center justify-between hover:bg-slate-50 transition-all"
+                                >
+                                  <div className="flex items-center gap-4">
+                                    <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl group-hover/tx:bg-indigo-600 group-hover/tx:text-white transition-all">
+                                      <History size={20} />
+                                    </div>
+                                    <div className="text-left">
+                                      <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight">
+                                        {tx.transaction_label}
+                                      </h4>
+                                      <div className="flex items-center gap-3 mt-1">
+                                        <span className="text-[10px] text-slate-400 font-bold flex items-center gap-1">
+                                          <Clock size={10} /> {formatFullDate(tx.timestamp)}
+                                        </span>
+                                        <span className="text-[10px] text-slate-300">•</span>
+                                        <span className="text-[10px] text-slate-500 font-black">{tx.project_count} PROJECTS</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-4">
+                                    <div className="hidden md:flex flex-col items-end">
+                                      <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest flex items-center gap-1"><User size={8} /> OPERATOR</span>
+                                      <span className="text-[10px] font-bold text-slate-500">{tx.archived_by}</span>
+                                    </div>
+                                    {expandedTransactions.has(tx.transaction_id) ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                                  </div>
+                                </button>
+
+                                {expandedTransactions.has(tx.transaction_id) && (
+                                  <div className="p-0 bg-slate-50/30 border-t border-slate-100">
+                                    <div className="overflow-x-auto">
+                                      <table className="w-full text-left">
+                                        <thead>
+                                          <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50/50 border-b border-slate-100">
+                                            <th className="py-3 pl-6">Status</th>
+                                            <th className="py-3">Team Code</th>
+                                            <th className="py-3">Project Title</th>
+                                            <th className="py-3">Revision</th>
+                                            <th className="py-3 text-right pr-6">Actions</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                          {tx.projects.map((p) => (
+                                            <tr key={p.id} className="hover:bg-white transition-colors group/row">
+                                              <td className="py-3 pl-6">
+                                                <div className="flex items-center gap-2">
+                                                  {p.status === 'archived' ? (
+                                                    <CheckCircle2 size={16} className="text-emerald-500" />
+                                                  ) : (
+                                                    <AlertCircle size={16} className="text-amber-500" title={p.error} />
+                                                  )}
+                                                  <span className={`text-[10px] font-black uppercase tracking-tighter ${p.status === 'archived' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                                    {p.status}
+                                                  </span>
+                                                </div>
+                                              </td>
+                                              <td className="py-3">
+                                                <span className="text-xs font-black text-slate-700">{p.project_id}</span>
+                                              </td>
+                                              <td className="py-3">
+                                                <span className="text-xs font-bold text-slate-500 truncate block max-w-[400px]">{p.project_title}</span>
+                                              </td>
+                                              <td className="py-3">
+                                                <span className="text-[10px] font-black px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-md">v{p.version}</span>
+                                              </td>
+                                              <td className="py-3 text-right pr-6">
+                                                <div className="flex items-center justify-end gap-2">
+                                                  <button 
+                                                    onClick={() => window.open(`/api/registry/download/${p.id}/srs?preview=1`)}
+                                                    className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                                                    title="View Archive"
+                                                  >
+                                                    <Eye size={14} />
+                                                  </button>
+                                                  <button 
+                                                    onClick={() => handleDelete(p.id, p.project_title)}
+                                                    className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                                                    title="Delete"
+                                                  >
+                                                    <Trash2 size={14} />
+                                                  </button>
+                                                </div>
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </main>
 
       <footer className="mt-auto py-8 text-center border-t border-slate-200">
