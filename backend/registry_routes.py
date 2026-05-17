@@ -383,9 +383,12 @@ def get_transactions():
         doc_types = ['srs','sdd','spmp','std','ri','research_paper','usability_test','presentation','source_code','database','readme']
         defer_cols = []
         for dt in doc_types:
-            defer_cols.append(defer(getattr(ArchivalLedger, f"{dt}_binary")))
-            if hasattr(ArchivalLedger, f"{dt}_text"):
-                defer_cols.append(defer(getattr(ArchivalLedger, f"{dt}_text")))
+            bin_col = f"{dt}_binary"
+            txt_col = f"{dt}_text"
+            if hasattr(ArchivalLedger, bin_col):
+                defer_cols.append(defer(getattr(ArchivalLedger, bin_col)))
+            if hasattr(ArchivalLedger, txt_col):
+                defer_cols.append(defer(getattr(ArchivalLedger, txt_col)))
         
         records = ArchivalLedger.query.options(*defer_cols).order_by(ArchivalLedger.archived_at.asc()).all()
 
