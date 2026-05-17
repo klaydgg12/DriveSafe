@@ -78,10 +78,12 @@ app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=7)
 db.init_app(app)
 
 with app.app_context():
-    from sqlalchemy import text
+    from sqlalchemy import inspect, text
     try:
-        # --- COMPREHENSIVE AUTO-MIGRATION ---
-        # List of ALL columns that might be missing due to recent updates
+        # --- ROBUST AUTO-MIGRATION ---
+        inspector = inspect(db.engine)
+        existing_columns = [col['name'] for col in inspector.get_columns('archival_ledger')]
+        
         columns_to_add = [
             # Metadata
             ('batch_id', 'VARCHAR(50) AFTER version'),
@@ -103,7 +105,7 @@ with app.app_context():
             ('database_hash', 'VARCHAR(64) AFTER source_code_hash'),
             ('readme_hash', 'VARCHAR(64) AFTER database_hash'),
             
-            # Binary Data
+            # Binary Data (LargeBinary / LONGBLOB)
             ('source_code_binary', 'LONGBLOB AFTER ri_binary'),
             ('database_binary', 'LONGBLOB AFTER source_code_binary'),
             ('readme_binary', 'LONGBLOB AFTER database_binary'),
@@ -113,21 +115,16 @@ with app.app_context():
         ]
         
         for col_name, col_type in columns_to_add:
-            try:
-                # Check if column exists
-                check_sql = text(f"SHOW COLUMNS FROM archival_ledger LIKE '{col_name}'")
-                result = db.session.execute(check_sql).fetchone()
-                
-                if not result:
+            if col_name not in existing_columns:
+                try:
                     logger.info(f"Auto-Migration: Adding missing column '{col_name}'...")
-                    alter_sql = text(f"ALTER TABLE archival_ledger ADD COLUMN {col_name} {col_type}")
-                    db.session.execute(alter_sql)
+                    db.session.execute(text(f"ALTER TABLE archival_ledger ADD COLUMN {col_name} {col_type}"))
                     db.session.commit()
-            except Exception as col_err:
-                db.session.rollback()
-                logger.warning(f"Could not add column {col_name}: {col_err}")
+                except Exception as col_err:
+                    db.session.rollback()
+                    logger.warning(f"Could not add column {col_name}: {col_err}")
 
-        logger.info("Auto-Migration: Database schema is now synchronized.")
+        logger.info("Auto-Migration: Database schema synchronization check complete.")
     except Exception as e:
         db.session.rollback()
         logger.warning(f"Auto-Migration system encountered an error: {e}")

@@ -257,10 +257,13 @@ class ArchivalEngine:
                     self.download_file(file_id, temp_path)
                 except Exception as down_err:
                     err_str = str(down_err)
-                    if "exportSizeLimitExceeded" in err_str:
-                        error_msg += f"{doc_type.upper()}: File too large for Auto-PDF; "
+                    # Prioritize specific known errors
+                    if "File too large" in err_str:
+                        error_msg += f"{doc_type.upper()}: {err_str}; "
+                    elif "403" in err_str or "permission" in err_str.lower():
+                        error_msg += f"{doc_type.upper()}: Permission Denied (Link is not shared); "
                     else:
-                        error_msg += f"{doc_type.upper()} Download Error; "
+                        error_msg += f"{doc_type.upper()} Download Error: {err_str[:50]}; "
                     continue
 
                 with open(temp_path, "rb") as f:
