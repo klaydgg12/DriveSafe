@@ -314,8 +314,20 @@ class ArchivalEngine:
         if total_changed == 0 and last_record:
             return {'status': 'unchanged', 'message': 'No edits found in Google Drive since last archive.', 'version': last_record.version}
 
-        current_version = (last_record.version if last_record else 0) + 1
-        status = "archived" if not error_msg else "failed"
+        # 4. Final Decision
+        if error_msg:
+            if total_changed > 0:
+                status = "partial" # Some succeeded, some failed
+            else:
+                status = "failed" # All attempted failed
+        else:
+            status = "archived" # All succeeded
+        
+        # VERSIONING LOGIC: Only increment version if at least one file SUCCEEDED.
+        if status in ["archived", "partial"]:
+            current_version = (last_record.version if last_record else 0) + 1
+        else:
+            current_version = last_record.version if last_record else 0
 
         try:
             ledger_entry = ArchivalLedger(
@@ -326,36 +338,21 @@ class ArchivalEngine:
                 ri_original_url=project_data.get('ri_link'), source_code_original_url=project_data.get('source_code_link'),
                 github_original_url=project_data.get('github_link'), database_original_url=project_data.get('database_link'),
                 readme_original_url=project_data.get('readme_link'),
-                srs_local_path=results['srs']['path'] if status == 'archived' else None,
-                sdd_local_path=results['sdd']['path'] if status == 'archived' else None,
-                spmp_local_path=results['spmp']['path'] if status == 'archived' else None,
-                std_local_path=results['std']['path'] if status == 'archived' else None,
-                ri_local_path=results['ri']['path'] if status == 'archived' else None,
-                source_code_local_path=results['source_code']['path'] if status == 'archived' else None,
-                database_local_path=results['database']['path'] if status == 'archived' else None,
-                readme_local_path=results['readme']['path'] if status == 'archived' else None,
-                srs_hash=results['srs']['hash'] if status == 'archived' else None,
-                sdd_hash=results['sdd']['hash'] if status == 'archived' else None,
-                spmp_hash=results['spmp']['hash'] if status == 'archived' else None,
-                std_hash=results['std']['hash'] if status == 'archived' else None,
-                ri_hash=results['ri']['hash'] if status == 'archived' else None,
-                source_code_hash=results['source_code']['hash'] if status == 'archived' else None,
-                database_hash=results['database']['hash'] if status == 'archived' else None,
-                readme_hash=results['readme']['hash'] if status == 'archived' else None,
-                srs_binary=results['srs']['bin'] if status == 'archived' else None,
-                sdd_binary=results['sdd']['bin'] if status == 'archived' else None,
-                spmp_binary=results['spmp']['bin'] if status == 'archived' else None,
-                std_binary=results['std']['bin'] if status == 'archived' else None,
-                ri_binary=results['ri']['bin'] if status == 'archived' else None,
-                source_code_binary=results['source_code']['bin'] if status == 'archived' else None,
-                database_binary=results['database']['bin'] if status == 'archived' else None,
-                readme_binary=results['readme']['bin'] if status == 'archived' else None,
-                srs_text=results['srs'].get('text') if status == 'archived' else None,
-                sdd_text=results['sdd'].get('text') if status == 'archived' else None,
-                spmp_text=results['spmp'].get('text') if status == 'archived' else None,
-                std_text=results['std'].get('text') if status == 'archived' else None,
-                ri_text=results['ri'].get('text') if status == 'archived' else None,
-                readme_text=results['readme'].get('text') if status == 'archived' else None,
+                srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
+                spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
+                ri_local_path=results['ri']['path'], source_code_local_path=results['source_code']['path'],
+                database_local_path=results['database']['path'], readme_local_path=results['readme']['path'],
+                srs_hash=results['srs']['hash'], sdd_hash=results['sdd']['hash'],
+                spmp_hash=results['spmp']['hash'], std_hash=results['std']['hash'],
+                ri_hash=results['ri']['hash'], source_code_hash=results['source_code']['hash'],
+                database_hash=results['database']['hash'], readme_hash=results['readme']['hash'],
+                srs_binary=results['srs']['bin'], sdd_binary=results['sdd']['bin'],
+                spmp_binary=results['spmp']['bin'], std_binary=results['std']['bin'],
+                ri_binary=results['ri']['bin'], source_code_binary=results['source_code']['bin'],
+                database_binary=results['database']['bin'], readme_binary=results['readme']['bin'],
+                srs_text=results['srs'].get('text'), sdd_text=results['sdd'].get('text'),
+                spmp_text=results['spmp'].get('text'), std_text=results['std'].get('text'),
+                ri_text=results['ri'].get('text'), readme_text=results['readme'].get('text'),
                 status=status, version=current_version, batch_id=batch_id,
                 error_message=error_msg.strip(), archived_at=datetime.datetime.utcnow()
             )
