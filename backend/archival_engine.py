@@ -159,50 +159,59 @@ class ArchivalEngine:
             try:
                 # 1. FETCH LIVE CLOCK FROM GOOGLE
                 metadata = self._get_file_metadata(file_id)
+                if not metadata:
+                    logger.warning(f"Could not fetch metadata for {doc_type.upper()}. Drive API might be unreachable.")
+                    error_msg += f"{doc_type.upper()}: Access Denied or File Not Found; "
+                    continue
+
                 current_drive_ts = metadata.get('modifiedTime', 'Unknown')
-                
-                # 2. BULLETPROOF VERSIONING LOGIC
+                results[doc_type]['ts'] = current_drive_ts
+
+                # 2. RELIABLE TIMESTAMP VERSIONING
                 is_modified = True
                 if last_record and last_record.archived_at and current_drive_ts != 'Unknown':
                     try:
                         drive_dt = datetime.datetime.fromisoformat(current_drive_ts.replace('Z', '+00:00'))
-                        # Add a tiny buffer (3 seconds) to account for processing time during the last archival
                         vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc) + datetime.timedelta(seconds=3)
-                        
-                        # If Drive's modified time is older than the time we last archived the project, NO CHANGES were made.
                         if drive_dt <= vault_dt:
-                            logger.info(f"UNCHANGED: {doc_type.upper()} timestamp ({drive_dt}) <= vault ({vault_dt}).")
                             is_modified = False
-                        else:
-                            logger.info(f"CHANGE: {doc_type.upper()} modified in Drive! (Vault: {vault_dt} -> Drive: {drive_dt})")
-                    except Exception as e:
-                        logger.error(f"Time parsing error: {e}. Forcing archival.")
+                            logger.info(f"UNCHANGED: {doc_type.upper()} timestamp matches vault.")
+                    except: pass
 
                 if not is_modified:
-                    # Skip processing, reuse old data perfectly
                     results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                     results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                     results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
+                    results[doc_type]['bin'] = None
                     processed_file_ids[file_id] = {'data': results[doc_type]}
                     continue
 
-                # 3. FORCE ARCHIVE NEW VERSION
+                # 3. PROCESS THE NEW VERSION
                 logger.info(f"Downloading new version for {doc_type.upper()}...")
-                
-                # Wait briefly for Google's PDF exporter to catch up with the recent edit
                 import time
                 time.sleep(5) 
 
-                doc_dir = os.path.join(base_project_dir, doc_type.upper())
+                doc_dir = os.path.join(self.archive_root, workbook_name, folder_name, doc_type.upper())
                 os.makedirs(doc_dir, exist_ok=True)
                 temp_path = os.path.join(doc_dir, f"TEMP_{doc_type.upper()}.pdf")
-                self.download_file(file_id, temp_path)
-                
+
+                try:
+                    self.download_file(file_id, temp_path)
+                except Exception as down_err:
+                    err_str = str(down_err)
+                    if "exportSizeLimitExceeded" in err_str:
+                        error_msg += f"{doc_type.upper()}: File too large for Auto-PDF. Student must upload a direct PDF file instead; "
+                    else:
+                        error_msg += f"{doc_type.upper()} Download Error: {err_str}; "
+                    continue
+
                 with open(temp_path, "rb") as f:
                     file_binary = f.read()
                     results[doc_type]['bin'] = file_binary
-                
-                results[doc_type]['hash'] = metadata.get('md5Checksum') or hashlib.sha256(file_binary).hexdigest()
+
+                file_hash = metadata.get('md5Checksum') or hashlib.sha256(file_binary).hexdigest()
+                results[doc_type]['hash'] = file_hash
+
                 file_text = ""
                 if doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'readme']:
                     file_text = self._extract_text_from_pdf(temp_path)
@@ -210,26 +219,25 @@ class ArchivalEngine:
 
                 total_changed += 1
                 results[doc_type]['is_changed'] = True
-                
+
                 # Version naming
                 from sqlalchemy import func
                 prev_doc_v = db.session.query(func.count(ArchivalLedger.id)).filter(
                     ArchivalLedger.project_id == project_id,
                     getattr(ArchivalLedger, f"{doc_type}_hash").isnot(None)
                 ).scalar()
-                
+
                 doc_v = (prev_doc_v or 0) + 1
                 final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{doc_v}.pdf")
                 if os.path.exists(final_path): final_path = final_path.replace(".pdf", f"_{int(time.time())}.pdf")
-                
+
                 os.rename(temp_path, final_path)
                 results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
                 processed_file_ids[file_id] = {'data': results[doc_type]}
-                    
-            except Exception as e:
-                logger.error(f"Error processing {doc_type}: {e}")
-                error_msg += f"{doc_type.upper()} Error: {str(e)}; "
 
+            except Exception as e:
+                logger.error(f"Error processing {doc_type}: {e}", exc_info=True)
+                error_msg += f"{doc_type.upper()} System Error: {str(e)}; "
         if total_changed == 0 and last_record:
             return {'status': 'unchanged', 'message': 'No edits found in Google Drive since last archive.', 'version': last_record.version}
 
