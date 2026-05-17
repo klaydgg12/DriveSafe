@@ -134,23 +134,30 @@ def get_pending():
         projects = result['projects']
         available_docs = result['available_docs']
         
+        # --- OPTIMIZED BULK FETCH (Fixes 504 Timeouts) ---
+        # Fetch ALL records for this year in ONE query instead of N queries
+        all_records = ArchivalLedger.query.filter_by(academic_year=year).order_by(ArchivalLedger.id.desc()).all()
+        
+        # Map them by project_id for instant lookup
+        record_map = {}
+        for r in all_records:
+            if r.project_id not in record_map:
+                record_map[r.project_id] = r
+
         for p in projects:
             tracker_key = f"{sheet_id}_{year}_{p['row_index']}"
             
-            # 1. Fetch latest DB attempt for this team
-            last_record = ArchivalLedger.query.filter_by(
-                project_id=p['project_id'],
-                academic_year=year
-            ).order_by(ArchivalLedger.id.desc()).first()
+            # 1. Get the latest record from our pre-fetched map
+            last_record = record_map.get(p['project_id'])
 
             # 2. DEFAULT STATUS: Use DB if matches, otherwise Pending
             db_status = last_record.status.capitalize() if last_record else 'Pending'
-            if db_status == 'Archived' or db_status == 'Partial':
+            if last_record and (db_status == 'Archived' or db_status == 'Partial'):
                 # Detect if student UPDATED the links since we last archived
                 sheet_links = f"{p['srs_link']}{p['sdd_link']}{p['spmp_link']}{p['std_link']}{p['ri_link']}{p['source_code_link']}{p['database_link']}{p['readme_link']}"
                 db_links = f"{last_record.srs_original_url}{last_record.sdd_original_url}{last_record.spmp_original_url}{last_record.std_original_url}{last_record.ri_original_url}{last_record.source_code_original_url}{last_record.database_original_url}{last_record.readme_original_url}"
                 if sheet_links != db_links:
-                    db_status = 'Pending' # Link mismatch -> Student edited their work!
+                    db_status = 'Pending'
 
             p['status'] = db_status
             if tracker_key in LIVE_STATUS_TRACKER:
