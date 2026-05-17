@@ -54,21 +54,21 @@ class RegistrySheetsService:
             mapping = {}
             # EXTREME STRICTNESS to prevent RI/SRS overlap
             keywords = {
-                'project_id': ['team code', 'group code', 'team id'],
-                'student_id': ['id number', 'student number'],
+                'project_id': ['team code', 'group code', 'team id', 'team_id'],
+                'student_id': ['id number', 'student number', 'id_number'],
                 'project_title': ['project title', 'title'],
                 'student_name': ['student name'],
                 'srs_link': ['software requirements specification', 'srs'],
                 'sdd_link': ['software design description', 'sdd'],
                 'spmp_link': ['software project management plan', 'spmp'],
                 'std_link': ['software test document', 'std'],
-                'ri_link': ['requirements inventory', 'ri file'],
+                'ri_link': ['requirements inventory', 'ri file', 'ri_file'],
                 'research_paper_link': ['research paper', 'acm format'],
-                'usability_test_link': ['usability test results', 'usability'],
-                'presentation_link': ['final presentation', 'presentation ppt', 'ppt'],
-                'source_code_link': ['source code', 'zipped'],
+                'usability_test_link': ['usability test results', 'usability test', 'usability'],
+                'presentation_link': ['final presentation', 'presentation ppt', 'presentation_ppt'],
+                'source_code_link': ['zipped source code', 'source code', 'zipped_source'],
                 'github_link': ['github'],
-                'database_link': ['dumped database', 'sql dump'],
+                'database_link': ['dumped database', 'sql dump', 'database dump'],
                 'readme_link': ['readme']
             }
             for key, synonyms in keywords.items():
