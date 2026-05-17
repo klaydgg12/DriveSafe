@@ -436,8 +436,10 @@ const RegistryDashboard: React.FC = () => {
                                             {renderSortIcon('project_title')}
                                         </div>
                                     </th>
-                                    <th className="px-4 py-4 w-[280px]"><span className="text-[10px] font-black text-slate-400 tracking-[0.2em] uppercase">Deliverables</span></th>
-                                    <th onClick={() => handleSort('status')} className="px-6 py-4 cursor-pointer group text-right w-40">
+                                    {statusFilter !== 'Failed' && (
+                                        <th className="px-4 py-4 w-[280px]"><span className="text-[10px] font-black text-slate-400 tracking-[0.2em] uppercase">Deliverables</span></th>
+                                    )}
+                                    <th onClick={() => handleSort('status')} className={`px-6 py-4 cursor-pointer group text-right ${statusFilter === 'Failed' ? 'w-[400px]' : 'w-40'}`}>
                                         <div className="flex items-center justify-end gap-2">
                                             <span className="text-[10px] font-black text-slate-400 tracking-[0.2em] uppercase">Status</span>
                                             {renderSortIcon('status')}
@@ -448,7 +450,7 @@ const RegistryDashboard: React.FC = () => {
                             <tbody className="divide-y divide-slate-50">
                                 {loading && projects.length === 0 ? (
                                     <tr>
-                                        <td colSpan={5} className="px-4 py-32">
+                                        <td colSpan={statusFilter === 'Failed' ? 4 : 5} className="px-4 py-32">
                                             <div className="flex flex-col items-center gap-3">
                                                 <RefreshCw className="w-10 h-10 text-indigo-600 animate-spin" />
                                                 <p className="text-slate-400 font-black uppercase tracking-widest text-[10px]">Synchronizing Pipeline...</p>
@@ -457,7 +459,7 @@ const RegistryDashboard: React.FC = () => {
                                     </tr>
                                 ) : paginatedProjects.length === 0 ? (
                                     <tr>
-                                        <td colSpan={5} className="px-4 py-32">
+                                        <td colSpan={statusFilter === 'Failed' ? 4 : 5} className="px-4 py-32">
                                             <div className="flex flex-col items-center gap-4 max-w-sm mx-auto text-center">
                                                 <div className="w-20 h-20 bg-slate-50 rounded-[2rem] flex items-center justify-center text-slate-200 border border-slate-100 shadow-inner">
                                                     <FilterX className="w-10 h-10" />
@@ -485,54 +487,63 @@ const RegistryDashboard: React.FC = () => {
                                                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">{p.academic_year}</span>
                                                 </div>
                                             </td>
-                                            <td className="px-4 py-4">
-                                                <div className="flex flex-wrap items-center gap-1.5 max-w-[400px]">
-                                                    {[
-                                                        { id: 'srs', label: 'SRS', color: 'blue' },
-                                                        { id: 'sdd', label: 'SDD', color: 'purple' },
-                                                        { id: 'spmp', label: 'SPMP', color: 'emerald' },
-                                                        { id: 'std', label: 'STD', color: 'amber' },
-                                                        { id: 'ri', label: 'RI', color: 'rose' },
-                                                        { id: 'source_code', label: 'SRC', color: 'orange' },
-                                                        { id: 'github', label: 'GH', color: 'slate' },
-                                                        { id: 'database', label: 'DB', color: 'cyan' },
-                                                        { id: 'readme', label: 'RM', color: 'gray' }
-                                                    ].filter(doc => availableDocs.includes(doc.id)).map(doc => {
-                                                        const link = p[`${doc.id}_link` as keyof Project] as string;
-                                                        const isAccessible = validationResults[link] === 'Accessible';
-                                                        const isMissing = !link;
-                                                        
-                                                        const baseColors: Record<string, string> = {
-                                                            blue: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-blue-50 border-blue-100 text-blue-600 hover:bg-blue-100' : 'bg-white border-slate-200 text-slate-400 hover:border-blue-300 hover:text-blue-600',
-                                                            purple: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-purple-50 border-purple-100 text-purple-600 hover:bg-purple-100' : 'bg-white border-slate-200 text-slate-400 hover:border-purple-300 hover:text-purple-600',
-                                                            emerald: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-emerald-50 border-emerald-100 text-emerald-600 hover:bg-emerald-100' : 'bg-white border-slate-200 text-slate-400 hover:border-emerald-300 hover:text-emerald-600',
-                                                            amber: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-amber-50 border-amber-100 text-amber-600 hover:bg-amber-100' : 'bg-white border-slate-200 text-slate-400 hover:border-amber-300 hover:text-amber-600',
-                                                            rose: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-rose-50 border-rose-100 text-rose-600 hover:bg-rose-100' : 'bg-white border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-600',
-                                                            orange: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-orange-50 border-orange-100 text-orange-600 hover:bg-orange-100' : 'bg-white border-slate-200 text-slate-400 hover:border-orange-300 hover:text-orange-600',
-                                                            slate: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-700',
-                                                            cyan: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-cyan-50 border-cyan-100 text-cyan-600 hover:bg-cyan-100' : 'bg-white border-slate-200 text-slate-400 hover:border-cyan-300 hover:text-cyan-600',
-                                                            gray: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-slate-50 border-slate-100 text-slate-600 hover:bg-slate-100' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-600'
-                                                        };
+                                            {statusFilter !== 'Failed' && (
+                                                <td className="px-4 py-4">
+                                                    <div className="flex flex-wrap items-center gap-1.5 max-w-[400px]">
+                                                        {[
+                                                            { id: 'srs', label: 'SRS', color: 'blue' },
+                                                            { id: 'sdd', label: 'SDD', color: 'purple' },
+                                                            { id: 'spmp', label: 'SPMP', color: 'emerald' },
+                                                            { id: 'std', label: 'STD', color: 'amber' },
+                                                            { id: 'ri', label: 'RI', color: 'rose' },
+                                                            { id: 'source_code', label: 'SRC', color: 'orange' },
+                                                            { id: 'github', label: 'GH', color: 'slate' },
+                                                            { id: 'database', label: 'DB', color: 'cyan' },
+                                                            { id: 'readme', label: 'RM', color: 'gray' }
+                                                        ].filter(doc => availableDocs.includes(doc.id)).map(doc => {
+                                                            const link = p[`${doc.id}_link` as keyof Project] as string;
+                                                            const isAccessible = validationResults[link] === 'Accessible';
+                                                            const isMissing = !link;
+                                                            
+                                                            const baseColors: Record<string, string> = {
+                                                                blue: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-blue-50 border-blue-100 text-blue-600 hover:bg-blue-100' : 'bg-white border-slate-200 text-slate-400 hover:border-blue-300 hover:text-blue-600',
+                                                                purple: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-purple-50 border-purple-100 text-purple-600 hover:bg-purple-100' : 'bg-white border-slate-200 text-slate-400 hover:border-purple-300 hover:text-purple-600',
+                                                                emerald: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-emerald-50 border-emerald-100 text-emerald-600 hover:bg-emerald-100' : 'bg-white border-slate-200 text-slate-400 hover:border-emerald-300 hover:text-emerald-600',
+                                                                amber: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-amber-50 border-amber-100 text-amber-600 hover:bg-amber-100' : 'bg-white border-slate-200 text-slate-400 hover:border-amber-300 hover:text-amber-600',
+                                                                rose: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-rose-50 border-rose-100 text-rose-600 hover:bg-rose-100' : 'bg-white border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-600',
+                                                                orange: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-orange-50 border-orange-100 text-orange-600 hover:bg-orange-100' : 'bg-white border-slate-200 text-slate-400 hover:border-orange-300 hover:text-orange-600',
+                                                                slate: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-700',
+                                                                cyan: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-cyan-50 border-cyan-100 text-cyan-600 hover:bg-cyan-100' : 'bg-white border-slate-200 text-slate-400 hover:border-cyan-300 hover:text-cyan-600',
+                                                                gray: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-slate-50 border-slate-100 text-slate-600 hover:bg-slate-100' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-600'
+                                                            };
 
-                                                        return (
-                                                            <div key={doc.id} className="relative group/doc">
-                                                                <a 
-                                                                    href={link || '#'} 
-                                                                    target="_blank" 
-                                                                    rel="noreferrer" 
-                                                                    className={`min-w-[34px] h-7 px-2 flex items-center justify-center rounded-lg border text-[10px] font-black transition-all ${baseColors[doc.color]} ${isMissing ? 'cursor-not-allowed opacity-40' : 'shadow-sm active:scale-95'}`} 
-                                                                    onClick={e => isMissing && e.preventDefault()}
-                                                                    title={`${doc.label}: ${isMissing ? 'Missing' : isAccessible ? 'Verified' : 'Unverified'}`}
-                                                                >
-                                                                    {doc.label}
-                                                                </a>
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </td>
+                                                            return (
+                                                                <div key={doc.id} className="relative group/doc">
+                                                                    <a 
+                                                                        href={link || '#'} 
+                                                                        target="_blank" 
+                                                                        rel="noreferrer" 
+                                                                        className={`min-w-[34px] h-7 px-2 flex items-center justify-center rounded-lg border text-[10px] font-black transition-all ${baseColors[doc.color]} ${isMissing ? 'cursor-not-allowed opacity-40' : 'shadow-sm active:scale-95'}`} 
+                                                                        onClick={e => isMissing && e.preventDefault()}
+                                                                        title={`${doc.label}: ${isMissing ? 'Missing' : isAccessible ? 'Verified' : 'Unverified'}`}
+                                                                    >
+                                                                        {doc.label}
+                                                                    </a>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </td>
+                                            )}
                                             <td className="px-6 py-4 text-right">
                                                 <div className="flex items-center justify-end gap-3 group/status">
+                                                    {statusFilter === 'Failed' && p.error_message && (
+                                                        <div className="flex-1 text-left mr-4 max-w-[300px]">
+                                                            <p className="text-[10px] font-bold text-red-500 uppercase leading-tight line-clamp-2">
+                                                                {p.error_message}
+                                                            </p>
+                                                        </div>
+                                                    )}
                                                     {getStatusBadge(p.status, p.latest_version, p.error_message)}
                                                     {(p.status.toLowerCase() === 'archived' || p.status.toLowerCase() === 'failed' || p.status.toLowerCase() === 'partial') && (
                                                         <button 
