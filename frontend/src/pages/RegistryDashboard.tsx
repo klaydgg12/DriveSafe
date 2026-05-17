@@ -256,28 +256,15 @@ const RegistryDashboard: React.FC = () => {
         let classes = "bg-gray-100 text-gray-600";
         if (s === 'pending') classes = "bg-amber-100 text-amber-700 ring-1 ring-amber-200";
         if (s === 'archived') classes = "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200";
-        if (s === 'failed') classes = "bg-red-100 text-red-700 ring-1 ring-red-200 cursor-help";
-        if (s === 'partial') classes = "bg-orange-100 text-orange-700 ring-1 ring-orange-200 cursor-help";
+        if (s === 'failed') classes = "bg-red-100 text-red-700 ring-1 ring-red-200";
+        if (s === 'partial') classes = "bg-orange-100 text-orange-700 ring-1 ring-orange-200";
         if (s === 'processing') classes = "bg-indigo-100 text-indigo-700 animate-pulse ring-1 ring-indigo-200";
 
         return (
-            <div className="group/badge relative inline-block">
+            <div className="relative inline-block" title={errorMsg ? errorMsg : undefined}>
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${classes}`}>
                     {status} {version && version > 0 ? `v${version}` : ''}
                 </span>
-                {(s === 'failed' || s === 'partial') && errorMsg && (
-                    <div className="absolute right-0 bottom-full mb-2 hidden group-hover/badge:block w-72 p-3 bg-slate-800 text-white text-[10px] font-medium rounded-xl shadow-2xl z-[60] border border-slate-700 text-left">
-                        <div className="flex items-center gap-2 mb-1 text-red-400 font-bold uppercase tracking-tighter">
-                            <AlertCircle size={12} /> {s === 'partial' ? 'Partial Success with Errors' : 'Archival Error'}
-                        </div>
-                        <div className="leading-relaxed whitespace-pre-wrap">
-                            {errorMsg}
-                        </div>
-                        <div className="mt-2 text-slate-400 text-[9px] italic border-t border-slate-700 pt-1">
-                            Tip: Check permissions or use direct PDF links for large files.
-                        </div>
-                    </div>
-                )}
             </div>
         );
     };
