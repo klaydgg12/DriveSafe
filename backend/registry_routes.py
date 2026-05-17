@@ -258,9 +258,19 @@ def get_grouped_ledger():
                         "status": r.status
                     })
         result = list(grouped_data.values())
+        
+        # FINAL FILTER: Only include projects that have at least ONE successfully archived file
+        # This removes "Ghost Projects" (failed attempts) from the ledger view
+        final_clean_ledger = []
         for project in result:
-            for doc_type in project["documents"]: project["documents"][doc_type].reverse()
-        return jsonify(result)
+            total_success_count = sum(len(vers) for vers in project["documents"].values())
+            if total_success_count > 0:
+                # Reverse versions for UI (Newest First)
+                for doc_type in project["documents"]: 
+                    project["documents"][doc_type].reverse()
+                final_clean_ledger.append(project)
+        
+        return jsonify(final_clean_ledger)
     except Exception as e:
         logger.error(f"DEBUG: get_grouped_ledger error: {str(e)}\n{traceback.format_exc()}", exc_info=True)
         return jsonify([])
