@@ -9,7 +9,8 @@ import time
 import requests
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
-from oauth2client.service_account import Credentials
+from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from models import db, ArchivalLedger
 
 # AI Imports
@@ -208,6 +209,7 @@ class ArchivalEngine:
         base_project_dir = os.path.join(self.archive_root, workbook_name, folder_name)
         os.makedirs(base_project_dir, exist_ok=True)
         
+        # Latest record (Any status)
         last_record = ArchivalLedger.query.filter(
             ArchivalLedger.project_id == project_id,
             ArchivalLedger.academic_year == academic_year,
@@ -265,10 +267,13 @@ class ArchivalEngine:
                 os.makedirs(doc_dir, exist_ok=True)
                 temp_path = os.path.join(doc_dir, f"TEMP_{doc_type.upper()}.pdf")
 
+                # DOWNLOAD & CONVERT - CRITICAL: Assign returned bytes to the bin results!
                 final_bytes = self.download_file(file_id, temp_path)
                 results[doc_type]['bin'] = final_bytes
+
                 new_hash = hashlib.sha256(final_bytes).hexdigest()
                 
+                # STRICT HASH DEDUPLICATION
                 if last_record:
                     last_hash = getattr(last_record, f"{doc_type}_hash")
                     if new_hash == last_hash:
