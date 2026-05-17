@@ -49,7 +49,6 @@ const ArchivalLedgerPage = () => {
   const [selectedWorkbook, setSelectedWorkbook] = useState<string>("");
   const [years, setYears] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState<string>("");
-  const [statusFilter, setStatusFilter] = useState<string>("All");
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
@@ -62,7 +61,7 @@ const ArchivalLedgerPage = () => {
 
   useEffect(() => { fetchWorkbooks(); }, []);
   useEffect(() => { fetchYears(selectedWorkbook); }, [selectedWorkbook]);
-  useEffect(() => { fetchLedger(); }, [selectedYear, selectedWorkbook, statusFilter]);
+  useEffect(() => { fetchLedger(); }, [selectedYear, selectedWorkbook]);
 
   const fetchWorkbooks = async () => {
     try {
@@ -143,15 +142,6 @@ const ArchivalLedgerPage = () => {
     finally { setLoading(false); }
   };
 
-  const getStatusStyles = (status: string) => {
-    switch (status) {
-      case 'Archived': return "bg-emerald-50 text-emerald-700 border-emerald-100";
-      case 'Failed': return "bg-rose-50 text-rose-700 border-rose-100";
-      case 'Pending': return "bg-amber-50 text-amber-700 border-amber-100";
-      default: return "bg-gray-50 text-gray-700 border-gray-100";
-    }
-  };
-
   const getDocStyles = (type: string) => {
     const t = type.toLowerCase();
     if (t === 'srs') return { text: "text-blue-600", bg: "bg-blue-50", border: "border-blue-100", icon: <FileText size={16} /> };
@@ -171,15 +161,13 @@ const ArchivalLedgerPage = () => {
   const filteredAndSortedProjects = useMemo(() => {
     return projects
       .filter(p => {
-        const matchesSearch = p.project_title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                              p.project_id.toLowerCase().includes(searchQuery.toLowerCase());
-        const matchesStatus = statusFilter === 'All' || p.status === statusFilter;
-        return matchesSearch && matchesStatus;
+        return p.project_title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+               p.project_id.toLowerCase().includes(searchQuery.toLowerCase());
       })
       .sort((a, b) => {
         return a.project_id.localeCompare(b.project_id, undefined, { numeric: true, sensitivity: 'base' });
       });
-  }, [projects, searchQuery, statusFilter]);
+  }, [projects, searchQuery]);
 
   const totalPages = Math.ceil(filteredAndSortedProjects.length / projectsPerPage);
   const paginatedProjects = useMemo(() => {
@@ -246,18 +234,6 @@ const ArchivalLedgerPage = () => {
               className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-[1.25rem] focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none text-sm font-medium transition-all shadow-sm" 
             />
           </div>
-
-          <div className="flex items-center gap-1 bg-white p-1 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto no-scrollbar shrink-0">
-            {['All', 'Archived', 'Pending', 'Failed'].map((f) => (
-              <button
-                key={f}
-                onClick={() => setStatusFilter(f)}
-                className={`px-5 py-2 text-[10px] font-black rounded-xl transition-all uppercase tracking-widest ${statusFilter === f ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
         </div>
 
         <div className="space-y-4">
@@ -273,13 +249,14 @@ const ArchivalLedgerPage = () => {
               </div>
               <div className="text-center space-y-1">
                 <p className="text-slate-900 font-black text-xl tracking-tight">Vault segment is empty</p>
-                <p className="text-slate-400 text-sm font-medium italic">No archival records match your current filter.</p>
+                <p className="text-slate-400 text-sm font-medium italic">No archival records match your current search.</p>
               </div>
             </div>
           ) : (
             paginatedProjects.map((project) => {
               const pKey = `${project.project_id}-${project.project_title}`;
               const isExpanded = expandedProjects.has(pKey);
+              const totalArchives = Object.values(project.documents).flat().length;
               
               return (
                 <div key={pKey} className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-slate-200/50 group">
@@ -294,7 +271,7 @@ const ArchivalLedgerPage = () => {
                       <div className="space-y-1">
                         <div className="flex items-center gap-3">
                           <span className="text-[10px] font-mono font-black px-2 py-0.5 bg-slate-100 text-slate-500 rounded-lg border border-slate-200 uppercase tracking-tighter">{project.project_id}</span>
-                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${getStatusStyles(project.status)}`}>{project.status}</span>
+                          <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100 uppercase tracking-widest">{totalArchives} ARCHIVES</span>
                         </div>
                         <h3 className="text-xl font-black text-slate-900 tracking-tight group-hover:text-indigo-600 transition-colors">{project.project_title}</h3>
                         <div className="flex items-center gap-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">
