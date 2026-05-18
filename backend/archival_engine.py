@@ -36,26 +36,32 @@ class ArchivalEngine:
         self.identity_label = "TEACHER" if user_credentials else "ROBOT"
         self.creds = user_credentials
         
+        # Primary Service (Teacher)
         if user_credentials:
             self.service = build('drive', 'v3', credentials=user_credentials, cache_discovery=False)
-        elif service_account_json_path:
+        
+        # Fallback Service (Service Account "Robot")
+        self.sa_service = None
+        if service_account_json_path:
             try:
                 if service_account_json_path.strip().startswith('{'):
                     import json
                     info = json.loads(service_account_json_path)
-                    self.creds = service_account.Credentials.from_service_account_info(info, scopes=self.scope)
+                    sa_creds = service_account.Credentials.from_service_account_info(info, scopes=self.scope)
                 else:
-                    self.creds = service_account.Credentials.from_service_account_file(service_account_json_path, scopes=self.scope)
-                self.service = build('drive', 'v3', credentials=self.creds, cache_discovery=False)
+                    sa_creds = service_account.Credentials.from_service_account_file(service_account_json_path, scopes=self.scope)
+                self.sa_service = build('drive', 'v3', credentials=sa_creds, cache_discovery=False)
+                if not hasattr(self, 'service'):
+                    self.service = self.sa_service
             except Exception as e:
-                logger.error(f"Failed to init service account: {e}")
+                logger.error(f"Failed to init service account fallback: {e}")
         
         if not hasattr(self, 'service'):
              raise ValueError("No authentication method provided for ArchivalEngine")
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v22 Initialized (Content-Strict Protocol)")
+        logger.info(f"ArchivalEngine Master v23 Initialized (Identity-Adaptive Protocol)")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -76,51 +82,47 @@ class ArchivalEngine:
                 fields='id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails, size',
                 supportsAllDrives=True
             ).execute()
-        except: return None
+        except:
+            # Fallback to Service Account metadata
+            if self.sa_service:
+                try: return self.sa_service.files().get(fileId=file_id, fields='id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails, size', supportsAllDrives=True).execute()
+                except: return None
+            return None
 
     def _resolve_folder(self, folder_id, target_hint=None):
         try:
             query = f"'{folder_id}' in parents and trashed = false"
             results = self.service.files().list(
-                q=query, 
-                fields="files(id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails)", 
-                orderBy="modifiedTime desc",
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True
+                q=query, fields="files(id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails)", 
+                orderBy="modifiedTime desc", supportsAllDrives=True, includeItemsFromAllDrives=True
             ).execute()
             files = results.get('files', [])
             if not files: return None, None
             
-            selected_file = None
+            selected = None
             if target_hint:
                 hint = target_hint.lower().replace('finalized', '').replace('software', '').strip()
                 for f in files:
                     if hint in f['name'].lower(): 
-                        selected_file = f
+                        selected = f
                         break
-            
-            if not selected_file:
+            if not selected:
                 for f in files:
                     if 'pdf' in f['mimeType'].lower() or 'document' in f['mimeType'].lower():
-                        selected_file = f
+                        selected = f
                         break
-            
-            if not selected_file: selected_file = files[0]
-            fid = selected_file['id']
-            if selected_file.get('mimeType') == 'application/vnd.google-apps.shortcut':
-                fid = selected_file.get('shortcutDetails', {}).get('targetId') or fid
-                return fid, self._get_file_metadata(fid)
-            return fid, selected_file
-        except Exception as e:
-            logger.error(f"Folder resolution failed for {folder_id}: {e}")
-            return None, None
+            if not selected: selected = files[0]
+            fid = selected['id']
+            if selected.get('mimeType') == 'application/vnd.google-apps.shortcut':
+                fid = selected.get('shortcutDetails', {}).get('targetId') or fid
+            return fid, selected
+        except: return None, None
 
     def _extract_text_from_pdf(self, file_path):
         try:
             text = ""
             with pdfplumber.open(file_path) as pdf:
-                for page in pdf.pages[:50]: 
-                    text += (page.extract_text() or "")
+                for page in pdf.pages[:50]: text += (page.extract_text() or "")
             return text
         except: return ""
 
@@ -128,12 +130,11 @@ class ArchivalEngine:
         if not data or len(data) < 500: return False
         content_sample = data[:2000].lower()
         if b'<html' in content_sample:
-            if any(x in content_sample for x in [b'google login', b'sign in', b'access denied']):
-                return False
+            if any(x in content_sample for x in [b'google login', b'sign in', b'access denied']): return False
         if is_pdf and not data.startswith(b'%PDF-'): return False
         return True
 
-    def _construct_url(self, file_id, original_url=None, is_google_doc=True, inject_token=None):
+    def _construct_url(self, file_id, original_url=None, is_google_doc=True, clean=False, inject_token=None):
         params = {'format': 'pdf'}
         if not is_google_doc:
             params = {'export': 'download', 'id': file_id, 'confirm': 't'}
@@ -141,7 +142,8 @@ class ArchivalEngine:
         else:
             base_url = f"https://docs.google.com/document/d/{file_id}/export"
         if inject_token: params['access_token'] = inject_token
-        if original_url and '?' in str(original_url):
+        # STRATEGIC: Only include institutional parameters if NOT doing a 'Clean' attempt
+        if not clean and original_url and '?' in str(original_url):
             try:
                 parsed = urlparse(str(original_url))
                 query = parse_qs(parsed.query)
@@ -153,51 +155,55 @@ class ArchivalEngine:
     def download_file(self, file_id, destination_path, original_url=None):
         meta = self._get_file_metadata(file_id)
         if meta and meta.get('id'): file_id = meta.get('id')
-        
         mime_type = meta.get('mimeType', '').lower() if meta else 'unknown'
         file_name = meta.get('name', 'unknown') if meta else 'Document'
         is_google = 'google-apps' in mime_type or (original_url and 'docs.google.com' in str(original_url))
         is_pdf_target = destination_path.lower().endswith('.pdf')
         
-        logger.info(f"[{self.identity_label}] DOWNLOADING: {file_name}")
+        logger.info(f"[{self.identity_label}] ADAPTIVE ARCHIVE: {file_name}")
         final_data = None
         
-        # 1. Mirror
-        try:
-            url = self._construct_url(file_id, original_url, is_google_doc=is_google)
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'}
-            if self.creds:
-                if hasattr(self.creds, 'valid') and not self.creds.valid: 
-                    try: self.creds.refresh(requests.Session())
-                    except: pass
-                headers['Authorization'] = f'Bearer {self.creds.token}'
-            resp = self.session.get(url, headers=headers, timeout=60, allow_redirects=True)
-            if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=is_pdf_target):
-                final_data = resp.content
-        except: pass
-
-        # 2. Token Injection
-        if not final_data and self.creds:
+        # --- PHASE 1: IDENTITY-ADAPTIVE MIRROR (4 ATTMEPTS) ---
+        protocols = [
+            {'clean': False, 'token': False}, # Standard Mirror
+            {'clean': True,  'token': False}, # Clean Mirror (No institutional noise)
+            {'clean': False, 'token': True},  # Token Injection
+            {'clean': True,  'token': True},  # Clean Token Injection
+        ]
+        
+        for p in protocols:
             try:
-                url = self._construct_url(file_id, original_url, is_google_doc=is_google, inject_token=self.creds.token)
-                resp = self.session.get(url, timeout=60, allow_redirects=True)
+                token = self.creds.token if (p['token'] and self.creds) else None
+                url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=p['clean'], inject_token=token)
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                    'Accept': 'application/pdf,application/octet-stream,*/*',
+                    'Referer': 'https://docs.google.com/',
+                }
+                if self.creds and not p['token']: # Standard Bearer Auth
+                    if hasattr(self.creds, 'valid') and not self.creds.valid: self.creds.refresh(requests.Session())
+                    headers['Authorization'] = f'Bearer {self.creds.token}'
+                
+                resp = self.session.get(url, headers=headers, timeout=60, allow_redirects=True)
                 if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=is_pdf_target):
                     final_data = resp.content
-            except: pass
+                    break
+            except: continue
 
-        # 3. API
-        if not final_data:
+        # --- PHASE 2: ROBOT OVERRIDE (If Teacher is blocked but Robot has access) ---
+        if not final_data and self.sa_service:
             try:
+                logger.info(f"   [OVERRIDE] Attempting Service Account access...")
                 fh = io.BytesIO()
-                if is_google: request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
-                else: request = self.service.files().get_media(fileId=file_id, supportsAllDrives=True)
+                if is_google: request = self.sa_service.files().export_media(fileId=file_id, mimeType='application/pdf')
+                else: request = self.sa_service.files().get_media(fileId=file_id, supportsAllDrives=True)
                 downloader = MediaIoBaseDownload(fh, request)
                 done = False
                 while not done: _, done = downloader.next_chunk()
                 if self.validate_binary(fh.getvalue(), is_pdf=is_pdf_target): final_data = fh.getvalue()
             except: pass
 
-        if not final_data: raise Exception("Access Denied (Google Lock)")
+        if not final_data: raise Exception("Access Denied (Google Lock remains despite Adaptive Protocol)")
 
         # Word to PDF conversion
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
@@ -232,11 +238,7 @@ class ArchivalEngine:
         base_project_dir = os.path.join(self.archive_root, workbook_name, academic_year, batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}")
         os.makedirs(base_project_dir, exist_ok=True)
         
-        # --- GLOBAL HISTORY (Ignore workbook here to find existing records for deduplication) ---
-        last_record = ArchivalLedger.query.filter_by(
-            project_id=project_id, academic_year=academic_year
-        ).order_by(ArchivalLedger.version.desc()).first()
-        
+        last_record = ArchivalLedger.query.filter_by(project_id=project_id, academic_year=academic_year).order_by(ArchivalLedger.version.desc()).first()
         doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'presentation', 'source_code', 'database', 'readme']
         results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': b'', 'ts': None, 'text': '', 'url': None} for dt in doc_types}
         total_changed = 0
@@ -246,11 +248,10 @@ class ArchivalEngine:
             link = project_data.get(f'{doc_type}_link')
             results[doc_type]['url'] = link
             
-            # --- TIER 0: GAP-FILLING PERSISTENCE (Crucial for sheet switching) ---
+            # TIER 0: GAP-FILLING
             if not link and last_record:
                 old_path = getattr(last_record, f"{doc_type}_local_path")
                 if old_path:
-                    logger.info(f"   [INHERITING] {doc_type.upper()} inherited from global project history.")
                     results[doc_type]['path'] = old_path
                     results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                     results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
@@ -258,7 +259,6 @@ class ArchivalEngine:
                     continue
             
             if not link: continue
-            
             raw_id, is_folder = self._extract_file_id(link)
             if not raw_id: continue
             
@@ -269,7 +269,7 @@ class ArchivalEngine:
             if not file_id: continue
 
             try:
-                # --- TIER 1: METADATA FINGERPRINT (MD5 & Time) ---
+                # TIER 1: METADATA
                 drive_md5 = metadata.get('md5Checksum') if metadata else None
                 results[doc_type]['ts'] = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
                 is_google_doc = doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'readme']
@@ -277,14 +277,12 @@ class ArchivalEngine:
                 is_modified = True
                 if last_record:
                     vault_hash = getattr(last_record, f"{doc_type}_hash")
-                    if drive_md5 and vault_hash and drive_md5 == vault_hash:
-                        is_modified = False
+                    if drive_md5 and vault_hash and drive_md5 == vault_hash: is_modified = False
                     else:
                         try:
                             drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
                             vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
-                            if (drive_dt - vault_dt).total_seconds() <= 5: 
-                                is_modified = False
+                            if (drive_dt - vault_dt).total_seconds() <= 5: is_modified = False
                         except: pass
 
                 if not is_modified:
@@ -302,50 +300,28 @@ class ArchivalEngine:
                     new_hash = hashlib.sha256(final_bytes).hexdigest()
                     
                     if last_record:
-                        # --- TIER 2: BIT MATCH (Strict SHA-256) ---
+                        # TIER 2/3: BITS & DNA
                         old_hash = getattr(last_record, f"{doc_type}_hash")
                         if new_hash == old_hash:
-                            logger.info(f"   [TIER 2 SKIP] Bit match for {doc_type.upper()}.")
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                             results[doc_type]['hash'] = old_hash
                             results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
                             if os.path.exists(temp_path): os.remove(temp_path)
                             continue
-
-                        # --- TIER 3: CONTENT DNA (Alphanumeric Match) ---
+                        
                         if is_google_doc:
                             new_text = self._extract_text_from_pdf(temp_path)
                             old_text = getattr(last_record, f"{doc_type}_text")
-                            
-                            def get_clean_text(t):
-                                return re.sub(r'\W+', '', t).lower() if t else ""
-                                
-                            new_clean = get_clean_text(new_text)
-                            old_clean = get_clean_text(old_text)
-                            
-                            is_match = False
-                            if new_clean == old_clean:
-                                is_match = True
-                                logger.info(f"   [TIER 3 SKIP] Alphanumeric match for {doc_type.upper()}.")
-                            elif AI_AVAILABLE and new_clean and old_clean:
-                                try:
-                                    vect = TfidfVectorizer(min_df=1)
-                                    tfidf = vect.fit_transform([old_text, new_text])
-                                    sim = (tfidf * tfidf.T).toarray()[0,1]
-                                    if sim > 0.995:
-                                        is_match = True
-                                        logger.info(f"   [TIER 3 SKIP] AI Similarity {sim:.2%}.")
-                                except: pass
-                                
-                            if is_match:
+                            def get_clean_text(t): return re.sub(r'\W+', '', t).lower() if t else ""
+                            if get_clean_text(new_text) == get_clean_text(old_text):
                                 results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                                 results[doc_type]['hash'] = old_hash
                                 results[doc_type]['text'] = old_text
                                 if os.path.exists(temp_path): os.remove(temp_path)
                                 continue
 
-                    # CONTENT IS NEW
-                    new_text = new_text if 'new_text' in locals() else (self._extract_text_from_pdf(temp_path) if is_google_doc else "")
+                    # SUCCESSFUL CHANGE
+                    new_text = self._extract_text_from_pdf(temp_path) if is_google_doc else ""
                     results[doc_type]['bin'] = final_bytes
                     results[doc_type]['hash'] = new_hash
                     results[doc_type]['text'] = new_text
@@ -356,19 +332,14 @@ class ArchivalEngine:
                     os.rename(temp_path, final_path)
                     results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
                 except Exception as e:
-                    # RECOVER FROM VAULT on failure, but don't mark as changed
                     if last_record and getattr(last_record, f"{doc_type}_local_path"):
                         results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                         results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                         results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
-                        logger.info(f"   [RESILIENCE] {doc_type.upper()} failure, using vault copy (No version jump).")
                     else: raise e
             except Exception as e:
                 error_msg += f"{doc_type.upper()}: {str(e)[:50]}; "
 
-        # --- THE VERSION GATEKEEPER (SMOKING GUN FIX) ---
-        # If total_changed is 0, it means EVERYTHING was either inherited, identical, or recovered.
-        # We must NOT create a new record in this case.
         if total_changed == 0:
             if last_record: return {'status': 'unchanged', 'version': last_record.version}
             else: return {'status': 'failed', 'error': error_msg.strip()}
