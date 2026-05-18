@@ -52,52 +52,65 @@ class RegistrySheetsService:
         try:
             headers = [h.strip().lower() for h in worksheet.row_values(1)]
             mapping = {}
-            # EXTREME STRICTNESS to prevent RI/SRS overlap
+            # Synonyms list per logical column. Single-word synonyms like 'ri' or 'database'
+            # are matched against the header on word boundaries (re.search r'\bri\b'), so they
+            # won't accidentally hit substrings inside other words. Multi-word synonyms like
+            # 'requirements inventory' are matched as plain substrings (faster + good enough).
             keywords = {
-                'project_id': ['team code', 'group code', 'team id', 'team_id', 'group_id'],
-                'student_id': ['id number', 'student number', 'id_number'],
-                'project_title': ['project title', 'title', 'name of project'],
+                'project_id': ['team code', 'group code', 'team id', 'team_id'],
+                'student_id': ['id number', 'student number', 'id_number', 'student id'],
+                'project_title': ['project title', 'title'],
                 'student_name': ['student name'],
-                'srs_link': ['finalized software requirements specification', 'software requirements specification', 'srs'],
-                'sdd_link': ['finalized software design description', 'software design description', 'sdd'],
-                'spmp_link': ['finalized software project management plan', 'software project management plan', 'spmp'],
-                'std_link': ['finalized software test document', 'software test document', 'std'],
+                'srs_link': ['software requirements specification', 'srs'],
+                'sdd_link': ['software design description', 'sdd'],
+                'spmp_link': ['software project management plan', 'spmp'],
+                'std_link': ['software test document', 'std'],
+                # Bare 'ri' is a 2-char token; word-boundary matching prevents false positives
+                # like matching the 'ri' inside 'matrix' or 'requirements'. Order matters here:
+                # the longer 'requirements inventory' is tried first so we never collapse SRS
+                # into RI by accident.
                 'ri_link': ['requirements inventory', 'ri file', 'ri_file', 'ri'],
-                'research_paper_link': ['research paper (acm format)', 'research paper', 'acm format', 'rp', 'acm'],
+                'research_paper_link': ['research paper', 'acm format', 'rp'],
                 'usability_test_link': ['usability test results', 'usability test', 'usability', 'ut'],
-                'presentation_link': ['final presentation ppt', 'final presentation', 'presentation ppt', 'presentation_ppt', 'presentation', 'ppt'],
-                'source_code_link': ['zipped source code', 'source code', 'zipped_source', 'src'],
-                'github_link': ['github', 'gh'],
+                'presentation_link': ['final presentation', 'presentation ppt', 'presentation_ppt', 'presentation'],
+                'source_code_link': ['zipped source code', 'source code', 'zipped_source'],
+                'github_link': ['github'],
                 'database_link': ['dumped database', 'sql dump', 'database dump', 'database', 'db'],
-                'readme_link': ['readme', 'rm'],
-                'status': ['status'],
-                'error': ['error', 'error_message', 'remarks']
+                'readme_link': ['readme', 'read me']
             }
-            # 1. Map known keywords with high priority
+
+            def _header_matches(header, syn):
+                # Word-boundary regex for short / single-word synonyms to avoid collisions
+                # (e.g. 'ri' inside 'requirements'). Multi-word phrases use plain substring.
+                if ' ' in syn or '_' in syn:
+                    return syn in header
+                return re.search(r'\b' + re.escape(syn) + r'\b', header) is not None
+
+            # Track which header indices are already taken so two logical columns can't
+            # both bind to the same physical column (e.g. SRS vs RI both grabbing the same cell).
+            taken_indices = set()
             for key, synonyms in keywords.items():
                 for i, header in enumerate(headers):
-                    found = False
-                    for syn in synonyms:
-                        if syn == header:
-                            found = True
-                            break
-                        pattern = rf'\b{re.escape(syn)}\b'
-                        if re.search(pattern, header, re.IGNORECASE):
-                            found = True
-                            break
-                    if found:
-                        mapping[key] = i
-                        break
-            
-            # 2. Dynamic Mapping for potential deliverable links
-            mapped_indices = set(mapping.values())
-            for i, header in enumerate(headers):
-                if i not in mapped_indices and header:
-                    if any(stop in header.lower() for stop in ['timestamp', 'id number', 'student name', 'date']):
+                    if i in taken_indices:
                         continue
-                    clean_key = re.sub(r'[^a-z0-9]', '_', header.lower()).strip('_')
-                    if clean_key and f"{clean_key}_link" not in mapping:
-                        mapping[f"{clean_key}_link"] = i
+                    if any(_header_matches(header, syn) for syn in synonyms):
+                        mapping[key] = i
+                        taken_indices.add(i)
+                        break
+
+            # Dynamic fallback: any remaining un-mapped header that looks like a deliverable
+            # column gets auto-registered as "<clean_header>_link" so future doc types added to
+            # the sheet flow through to the dashboard and archival engine without code changes.
+            stop_words = ['timestamp', 'id number', 'student name', 'date', 'last_updated', 'last updated', 'status', 'error']
+            for i, header in enumerate(headers):
+                if i in taken_indices or not header:
+                    continue
+                if any(sw in header for sw in stop_words):
+                    continue
+                clean_key = re.sub(r'[^a-z0-9]', '_', header).strip('_')
+                if clean_key and f"{clean_key}_link" not in mapping:
+                    mapping[f"{clean_key}_link"] = i
+                    taken_indices.add(i)
             
             self._header_cache[cache_key] = mapping
             return mapping
