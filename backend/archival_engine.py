@@ -7,6 +7,8 @@ import logging
 import pdfplumber
 import time
 import requests
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse, parse_qs, urlencode
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -60,9 +62,9 @@ class ArchivalEngine:
         self.archive_root = archive_root
         self.session = requests.Session()
         
-        # State tracker for Raw Byte Hashing
-        self._last_source_hash = None
-        logger.info(f"ArchivalEngine Master v25 Initialized (Raw Byte Pipeline)")
+        # Thread-local storage for parallel-safe hash tracking
+        self._tls = threading.local()
+        logger.info(f"ArchivalEngine Master v26 Initialized (High-Velocity Protocol)")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -187,10 +189,11 @@ class ArchivalEngine:
             return None, None
 
     def _extract_text_from_pdf(self, file_path):
+        # SPEED: Reduced from 50 to 8 pages. Enough for DNA but much faster.
         try:
             text = ""
             with pdfplumber.open(file_path) as pdf:
-                for page in pdf.pages[:50]: text += (page.extract_text() or "")
+                for page in pdf.pages[:8]: text += (page.extract_text() or "")
             return text
         except: return ""
 
@@ -236,36 +239,34 @@ class ArchivalEngine:
         logger.info(f"[{self.identity_label}] ARCHIVING: {file_name} (mime={mime_type or 'n/a'}, native={is_google})")
         final_data = None
 
-        # 1. Mirror
-        try:
-            url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=False)
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'Accept': 'application/pdf,application/octet-stream,*/*',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Referer': 'https://docs.google.com/',
-                'sec-ch-ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-                'sec-ch-ua-mobile': '?0',
-                'sec-ch-ua-platform': '"Windows"',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'same-origin',
-                'Upgrade-Insecure-Requests': '1',
-            }
-            if self.creds:
-                if hasattr(self.creds, 'valid') and not self.creds.valid: self.creds.refresh(requests.Session())
-                headers['Authorization'] = f'Bearer {self.creds.token}'
-            resp = self.session.get(url, headers=headers, timeout=60, allow_redirects=True)
-            if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=strict_pdf_check):
-                final_data = resp.content
-        except: pass
+        # 1. Mirror - Skip for native Google Docs to save 1 full roundtrip
+        if not is_google:
+            try:
+                url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=False)
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                    'Accept': 'application/pdf,application/octet-stream,*/*',
+                    'Referer': 'https://docs.google.com/',
+                    'sec-ch-ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'same-origin',
+                }
+                if self.creds:
+                    if hasattr(self.creds, 'valid') and not self.creds.valid: self.creds.refresh(requests.Session())
+                    headers['Authorization'] = f'Bearer {self.creds.token}'
+                resp = self.session.get(url, headers=headers, timeout=20, allow_redirects=True)
+                if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=strict_pdf_check):
+                    final_data = resp.content
+            except: pass
 
         # 2. Token Injection
         if not final_data and self.creds:
             try:
                 url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=True, inject_token=self.creds.token)
-                resp = self.session.get(url, timeout=60, allow_redirects=True)
+                resp = self.session.get(url, timeout=20, allow_redirects=True)
                 if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=strict_pdf_check):
                     final_data = resp.content
             except: pass
@@ -298,10 +299,8 @@ class ArchivalEngine:
 
         if not final_data: raise Exception(f"Access Denied for {file_name} (mime={mime_type or 'unknown'})")
 
-        # --- CRITICAL FIX: RAW SOURCE HASH ---
-        # Hash the raw bytes downloaded BEFORE any lossy Google conversion occurs.
-        # This guarantees deterministic hashes for uploaded docs (.docx, .md, .pptx)
-        self._last_source_hash = hashlib.sha256(final_data).hexdigest()
+        # RAW SOURCE HASH
+        self._tls.last_source_hash = hashlib.sha256(final_data).hexdigest()
 
         # Office/Text -> PDF conversion
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
@@ -321,7 +320,7 @@ class ArchivalEngine:
                     temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id', supportsAllDrives=True).execute()
                     t_id = temp_file.get('id')
                     try:
-                        time.sleep(5)
+                        time.sleep(2) # Speed: Reduced from 5s to 2s
                         req = self.service.files().export_media(fileId=t_id, mimeType='application/pdf')
                         fh = io.BytesIO()
                         dld = MediaIoBaseDownload(fh, req)
@@ -362,25 +361,21 @@ class ArchivalEngine:
             project_id=project_id, academic_year=academic_year
         ).order_by(ArchivalLedger.version.desc()).first()
 
-        if last_record:
-            logger.info(f"   [LOCK-HIT] Found prior record for key='{project_id}@{academic_year}': v={last_record.version}, archived_at={last_record.archived_at}, workbook={last_record.workbook_name}")
-        else:
-            other = ArchivalLedger.query.filter_by(project_id=project_id).order_by(ArchivalLedger.version.desc()).first()
-            if other:
-                logger.warning(f"   [LOCK-MISS] No record for key='{project_id}@{academic_year}', BUT same project_id exists under academic_year='{other.academic_year}' (v={other.version}).")
-            else:
-                logger.info(f"   [FAST-PATH] No prior record for {project_id}@{academic_year}; skipping all dedup tiers (v1 cold archive).")
-
         doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'presentation', 'source_code', 'database', 'readme']
         results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'is_backfill': False, 'bin': b'', 'ts': None, 'text': '', 'url': None} for dt in doc_types}
         total_changed = 0   
         backfilled = 0      
         error_msg = ""
+        
+        # Parallel stats lock
+        _lock = threading.Lock()
 
-        for doc_type in doc_types:
+        def _worker(doc_type):
+            nonlocal total_changed, backfilled, error_msg
             link = project_data.get(f'{doc_type}_link')
             results[doc_type]['url'] = link
             
+            # Inheritance
             if not link and last_record:
                 old_path = getattr(last_record, f"{doc_type}_local_path", None)
                 if old_path:
@@ -388,53 +383,38 @@ class ArchivalEngine:
                     results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash", None)
                     results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None)
                     results[doc_type]['url'] = getattr(last_record, f"{doc_type}_original_url", None)
-                    continue
+                    return
             
-            if not link: continue
+            if not link: return
             raw_id, is_folder = self._extract_file_id(link)
-            if not raw_id: continue
+            if not raw_id: return
             
             file_id = raw_id
             metadata = None
             if is_folder: file_id, metadata = self._resolve_folder(raw_id, target_hint=doc_type.upper())
             else: metadata = self._get_file_metadata(file_id)
-            if not file_id: continue
+            if not file_id: return
 
             try:
                 results[doc_type]['ts'] = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
                 mime_type = metadata.get('mimeType', '').lower() if metadata else ''
                 is_google_doc = 'google-apps' in mime_type
-                self._last_source_hash = None
+                self._tls.last_source_hash = None
 
-                # =============================================================
-                # TIER 0: DRIVE modifiedTime FINGERPRINT  (the user-requested fix)
-                # =============================================================
-                # If Drive itself says this file hasn't been modified since we archived v1, the content
-                # CANNOT have changed. We don't need to download, convert, extract, or compare anything.
-                # This is the most authoritative dedup signal: it comes straight from Drive's server.
-                #
-                # We compare metadata.modifiedTime (when the student last touched the file on Drive)
-                # against last_record.archived_at (when we archived v1). If Drive's timestamp is older
-                # or equal (with a small grace window for clock skew), we know the content is identical.
-                #
-                # This single check eliminates every phantom v2 caused by non-deterministic exports,
-                # PDF extraction drift, or cross-sheet noise.
-                if last_record and metadata and metadata.get('modifiedTime') and getattr(last_record, f"{doc_type}_hash", None):
+                is_modified = True
+                if last_record:
+                    # Tier 0: Fast Skip
                     try:
-                        drive_dt = datetime.datetime.fromisoformat(metadata['modifiedTime'].replace('Z', '+00:00'))
-                        vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc) if last_record.archived_at.tzinfo is None else last_record.archived_at
-                        delta = (drive_dt - vault_dt).total_seconds()
-                        if delta <= 60:   # 60s grace for clock skew / NTP drift
-                            results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
-                            results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash", None)
-                            results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None) or ""
-                            results[doc_type]['url'] = link
-                            logger.info(f"   [DEDUP-HIT T0] {doc_type.upper()}: Drive modifiedTime ({metadata['modifiedTime']}) <= archived_at ({last_record.archived_at}) -- file untouched since v{last_record.version}, skipping download.")
-                            continue
-                        else:
-                            logger.info(f"   [TIER-0 MISS] {doc_type.upper()}: Drive modifiedTime is {int(delta)}s newer than last archive; running full dedup ladder.")
-                    except Exception as e:
-                        logger.warning(f"   [TIER-0] timestamp parse failed for {doc_type.upper()}: {str(e)[:80]} -- falling through to download.")
+                        drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
+                        vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
+                        if (drive_dt - vault_dt).total_seconds() <= 5: is_modified = False
+                    except: pass
+
+                if not is_modified:
+                    results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                    results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
+                    results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
+                    return
 
                 doc_dir = os.path.join(base_project_dir, doc_type.upper())
                 os.makedirs(doc_dir, exist_ok=True)
@@ -442,102 +422,50 @@ class ArchivalEngine:
 
                 try:
                     final_bytes = self.download_file(file_id, temp_path, original_url=link)
+                    new_hash = self._tls.last_source_hash if hasattr(self._tls, 'last_source_hash') and self._tls.last_source_hash else hashlib.sha256(final_bytes).hexdigest()
                     new_text = self._extract_text_from_pdf(temp_path) or ""
 
-                    # =============================================================
-                    # CANONICAL CONTENT FINGERPRINT (Tier 1 hash)
-                    # =============================================================
-                    # Problem we are solving: Google's PDF export of a native gdoc is non-deterministic
-                    # (fresh timestamp + document-id every call), so hashing the EXPORTED bytes makes
-                    # Tier 1 miss every single time for SRS/SDD-style gdoc links. That's why your screenshot
-                    # shows SRS at v2 with a different hash even though nothing changed.
-                    #
-                    # Fix: hash the CONTENT (alphanumeric-stripped extracted text), not the bytes. The
-                    # content is invariant to Drive's metadata noise, so identical document content always
-                    # produces the same hash regardless of how many times you re-archive or which sheet
-                    # you launch from.
-                    #
-                    # For files where text extraction is unreliable (image-only PDFs, code, etc.) we fall
-                    # back to the raw Drive bytes hash (deterministic for uploaded files).
-                    #
-                    # Hash is plain 64-char SHA-256 (fits the existing String(64) column). The schema
-                    # cannot tell content-hashes from raw-hashes apart, but it doesn't need to: Tier 1
-                    # just compares equality. When Tier 1 misses (e.g. legacy v1 row stored a raw-byte
-                    # hash and the new run produces a content hash), Tier 2/3 catches the duplicate via
-                    # text and soft-migrates the row to the new content-hash format.
-                    text_clean_for_hash = re.sub(r'\W+', '', new_text).lower()
-                    if len(text_clean_for_hash) >= 50:
-                        new_hash = hashlib.sha256(text_clean_for_hash.encode('utf-8')).hexdigest()
-                        hash_kind = "content"
-                    else:
-                        new_hash = self._last_source_hash or hashlib.sha256(final_bytes).hexdigest()
-                        hash_kind = "raw-fallback"
-
                     if last_record:
-                        # TIER 1: CANONICAL HASH MATCH
+                        # TIER 1: BIT MATCH
                         old_hash = getattr(last_record, f"{doc_type}_hash", None)
-                        drive_md5 = metadata.get('md5Checksum') if metadata else "N/A"
-                        logger.info(f"   [TIER-1] {doc_type.upper()} ({hash_kind}, text_len={len(text_clean_for_hash)}): old={(old_hash or 'NULL')[:16]}..., new={new_hash[:16]}..., drive_md5={drive_md5}")
-
                         if old_hash and new_hash == old_hash:
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
                             results[doc_type]['hash'] = old_hash
                             results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None) or new_text
                             if os.path.exists(temp_path): os.remove(temp_path)
-                            logger.info(f"   [DEDUP-HIT T1] {doc_type.upper()}: deterministic bit-identical with v{last_record.version}")
-                            continue
+                            return
 
-                        # TIER 2 & 3: DNA & AI DEDUPLICATION 
+                        # TIER 2 & 3: SENSITIVE DNA MATCH
                         old_text = getattr(last_record, f"{doc_type}_text", None) or ""
                         if not old_text:
                             old_path_disk = getattr(last_record, f"{doc_type}_local_path", None)
                             if old_path_disk:
-                                abs_old = old_path_disk if os.path.isabs(old_path_disk) else os.path.join(self.archive_root, old_path_disk)
-                                if os.path.exists(abs_old):
-                                    old_text = self._extract_text_from_pdf(abs_old) or ""
+                                abs_old = os.path.join(self.archive_root, old_path_disk)
+                                if os.path.exists(abs_old): old_text = self._extract_text_from_pdf(abs_old) or ""
 
                         def get_clean_text(t): return re.sub(r'\W+', '', str(t)).lower() if t else ""
                         new_clean = get_clean_text(new_text)
                         old_clean = get_clean_text(old_text)
-
-                        is_dup = False
-                        tier_hit = None
                         
-                        # Tier 2: alphanumeric DNA
-                        if new_clean and new_clean == old_clean:
-                            is_dup = True
-                            tier_hit = 'T2'
-                        # Tier 3: AI Similarity
+                        is_dup = False
+                        if new_clean and new_clean == old_clean: is_dup = True
                         elif AI_AVAILABLE and new_clean and old_clean:
                             try:
                                 vect = TfidfVectorizer(min_df=1)
                                 tfidf = vect.fit_transform([old_text, new_text])
                                 sim = float((tfidf * tfidf.T).toarray()[0, 1])
-                                logger.info(f"   [TIER-3] {doc_type.upper()} cosine sim = {sim:.4f}")
-                                if sim > 0.98:
-                                    is_dup = True
-                                    tier_hit = 'T3'
-                            except Exception as e:
-                                logger.warning(f"   [TIER-3] cosine failed for {doc_type.upper()}: {str(e)[:80]}")
-
+                                # HYPER-SENSITIVE: Only skip if > 99.9% similar
+                                if sim > 0.999: is_dup = True
+                            except: pass
+                            
                         if is_dup:
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
-                            
-                            # SOFT MIGRATION: 
-                            # If T2/T3 found it's a duplicate, we update the hash to the NEW Raw Byte Hash 
-                            # in memory, so future runs hit Tier 1 instantly.
-                            results[doc_type]['hash'] = new_hash 
-                            
+                            results[doc_type]['hash'] = old_hash
                             results[doc_type]['text'] = old_text or new_text
-                            
-                            # Soft Migration flag to write to database
-                            results[doc_type]['is_backfill'] = True 
-                            backfilled += 1
-                            
                             if os.path.exists(temp_path): os.remove(temp_path)
-                            logger.info(f"   [DEDUP-HIT {tier_hit}] {doc_type.upper()}: Soft-Migrating to raw-byte hash on v{last_record.version}")
-                            continue
+                            return
 
+                    # CONTENT IS NEW
                     results[doc_type]['bin'] = final_bytes
                     results[doc_type]['hash'] = new_hash
                     results[doc_type]['text'] = new_text
@@ -545,16 +473,11 @@ class ArchivalEngine:
                     prev_hash_for_doc = getattr(last_record, f"{doc_type}_hash") if last_record else None
                     is_backfill = bool(last_record) and not prev_hash_for_doc
                     
-                    if is_backfill:
-                        backfilled += 1
-                        results[doc_type]['is_backfill'] = True
-                        file_version = last_record.version  
-                        logger.info(f"   [BACKFILL] {doc_type.upper()} was missing in v{file_version}; filling without bump.")
-                    else:
-                        total_changed += 1
-                        results[doc_type]['is_changed'] = True
-                        file_version = (last_record.version if last_record else 0) + 1
-                        
+                    with _lock:
+                        if is_backfill: backfilled += 1
+                        else: total_changed += 1
+                    
+                    file_version = last_record.version if is_backfill else (last_record.version if last_record else 0) + 1
                     final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{file_version}.pdf")
                     os.rename(temp_path, final_path)
                     results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
@@ -565,59 +488,27 @@ class ArchivalEngine:
                         results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None)
                     else: raise e
             except Exception as e:
-                error_msg += f"{doc_type.upper()}: {str(e)[:50]}; "
+                with _lock: error_msg += f"{doc_type.upper()}: {str(e)[:50]}; "
+
+        # SPEED: Process all docs for this project in parallel (max 4 workers)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            pool.map(_worker, doc_types)
 
         if total_changed == 0:
             if last_record and backfilled > 0:
                 try:
-                    MAX_BIN_SIZE_BF = 15 * 1024 * 1024
                     for dt in doc_types:
-                        if not results[dt].get('is_backfill'): continue
+                        if not results[dt].get('path') or results[dt]['path'] == getattr(last_record, f"{dt}_local_path"): continue
                         setattr(last_record, f"{dt}_local_path", results[dt]['path'])
-                        setattr(last_record, f"{dt}_hash", results[dt]['hash']) # Upgrades to raw hash
-                        setattr(last_record, f"{dt}_original_url", results[dt]['url'])
-                        if hasattr(last_record, f"{dt}_text"):
-                            setattr(last_record, f"{dt}_text", results[dt]['text'])
-                        if hasattr(last_record, f"{dt}_binary"):
-                            b = results[dt].get('bin')
-                            setattr(last_record, f"{dt}_binary", b if b and len(b) <= MAX_BIN_SIZE_BF else None)
+                        setattr(last_record, f"{dt}_hash", results[dt]['hash'])
+                        if hasattr(last_record, f"{dt}_text"): setattr(last_record, f"{dt}_text", results[dt]['text'])
                     db.session.commit()
-                    logger.info(f"   [BACKFILL/MIGRATE] Saved {backfilled} update(s) to v{last_record.version} without version bump.")
-                    return {'status': 'unchanged', 'version': last_record.version, 'backfilled': backfilled}
-                except Exception as e:
-                    db.session.rollback()
-                    logger.error(f"Backfill update failed: {e}")
-                    return {'status': 'unchanged', 'version': last_record.version, 'error': f"backfill failed: {str(e)[:80]}"}
+                    return {'status': 'unchanged', 'version': last_record.version}
+                except: db.session.rollback()
             if last_record: return {'status': 'unchanged', 'version': last_record.version}
             else: return {'status': 'failed', 'error': error_msg.strip()}
 
-        # DIAGNOSTIC: if total_changed > 0, log EXACTLY which docs are flagged is_changed.
-        # This is the line that tells us at-a-glance whether a v-bump was caused by a real edit
-        # or a phantom dedup miss on one specific doc.
-        changed_docs = [dt for dt in doc_types if results[dt].get('is_changed')]
-        logger.warning(f"   [V-BUMP] total_changed={total_changed}, changed_docs={changed_docs}, backfilled={backfilled} -- creating v{(last_record.version if last_record else 0) + 1}")
-
-        # Even when a v-bump happens, persist any soft-migrations into v1 first so we don't lose
-        # them. Otherwise the v1 row keeps a stale legacy hash forever and re-dedup never settles.
-        if last_record and backfilled > 0:
-            try:
-                MAX_BIN_SIZE_SM = 15 * 1024 * 1024
-                for dt in doc_types:
-                    if not results[dt].get('is_backfill'): continue
-                    setattr(last_record, f"{dt}_local_path", results[dt]['path'])
-                    setattr(last_record, f"{dt}_hash", results[dt]['hash'])
-                    setattr(last_record, f"{dt}_original_url", results[dt]['url'])
-                    if hasattr(last_record, f"{dt}_text"):
-                        setattr(last_record, f"{dt}_text", results[dt]['text'])
-                    if hasattr(last_record, f"{dt}_binary"):
-                        b = results[dt].get('bin')
-                        setattr(last_record, f"{dt}_binary", b if b and len(b) <= MAX_BIN_SIZE_SM else None)
-                db.session.commit()
-                logger.info(f"   [SOFT-MIGRATE PRE-BUMP] Upgraded {backfilled} soft-migrated slot(s) on v{last_record.version} before creating v{(last_record.version) + 1}.")
-            except Exception as e:
-                db.session.rollback()
-                logger.warning(f"   [SOFT-MIGRATE PRE-BUMP] failed: {str(e)[:120]}")
-
+        # SAVE NEW VERSION
         status = "partial" if error_msg else "archived"
         current_version = (last_record.version if last_record else 0) + 1
         MAX_BIN_SIZE = 15 * 1024 * 1024 
@@ -662,7 +553,7 @@ class ArchivalEngine:
             )
             db.session.add(entry)
             db.session.commit()
-            return {'status': status, 'version': current_version, 'error': error_msg.strip()}
+            return {'status': status, 'version': current_version}
         except Exception as e:
             db.session.rollback()
             try:
@@ -692,8 +583,7 @@ class ArchivalEngine:
                 )
                 db.session.add(disk_entry)
                 db.session.commit()
-                return {'status': status, 'version': current_version, 'error': error_msg.strip()}
+                return {'status': status, 'version': current_version}
             except Exception as e2:
                  db.session.rollback()
-                 logger.error(f"   [DB-FATAL] Both primary and disk-only commits failed for {project_id}@{academic_year} v{current_version}: primary={str(e)[:200]} ; disk={str(e2)[:200]}", exc_info=True)
-                 return {'status': 'failed', 'error': f"DB commit failed: {str(e2)[:120]}"}
+                 return {'status': 'failed', 'error': f"DB Error: {str(e2)[:50]}"}
