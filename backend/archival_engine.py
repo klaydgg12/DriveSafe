@@ -313,27 +313,40 @@ class ArchivalEngine:
 
         if not final_data: raise Exception(f"Access Denied for {file_name} (mime={mime_type or 'unknown'})")
 
-        # Word to PDF conversion
+        # Office/Text -> PDF conversion (via temporary Google Doc)
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
-            if final_data.startswith(b'PK\x03\x04') or str(file_name).lower().endswith(('.docx', '.doc')):
+            lower_name = str(file_name).lower()
+            is_office = final_data.startswith(b'PK\x03\x04') or lower_name.endswith(('.docx', '.doc'))
+            is_text = (
+                lower_name.endswith(('.md', '.markdown', '.txt', '.rst', '.readme'))
+                or lower_name == 'readme'
+                or 'text/' in (mime_type or '')
+                or 'markdown' in (mime_type or '')
+            )
+            if is_office or is_text:
+                upload_mime = 'text/plain' if (is_text and not is_office) else 'application/octet-stream'
                 temp_meta = {'name': f"CONV_{int(time.time())}", 'mimeType': 'application/vnd.google-apps.document'}
-                media = MediaIoBaseUpload(io.BytesIO(final_data), mimetype='application/octet-stream', resumable=True)
-                temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id', supportsAllDrives=True).execute()
-                t_id = temp_file.get('id')
+                media = MediaIoBaseUpload(io.BytesIO(final_data), mimetype=upload_mime, resumable=True)
                 try:
-                    time.sleep(5)
-                    req = self.service.files().export_media(fileId=t_id, mimeType='application/pdf')
-                    fh = io.BytesIO()
-                    dld = MediaIoBaseDownload(fh, req)
-                    d_done = False
-                    while not d_done: _, d_done = dld.next_chunk()
-                    data = fh.getvalue()
-                    if data.startswith(b'%PDF-'): final_data = data
-                finally:
-                    try: self.service.files().delete(fileId=t_id, supportsAllDrives=True).execute()
-                    except: pass
+                    temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id', supportsAllDrives=True).execute()
+                    t_id = temp_file.get('id')
+                    try:
+                        time.sleep(5)
+                        req = self.service.files().export_media(fileId=t_id, mimeType='application/pdf')
+                        fh = io.BytesIO()
+                        dld = MediaIoBaseDownload(fh, req)
+                        d_done = False
+                        while not d_done: _, d_done = dld.next_chunk()
+                        data = fh.getvalue()
+                        if data.startswith(b'%PDF-'): final_data = data
+                    finally:
+                        try: self.service.files().delete(fileId=t_id, supportsAllDrives=True).execute()
+                        except: pass
+                except Exception as e:
+                    logger.warning(f"   [CONVERT] upload-as-gdoc failed for {file_name}: {str(e)[:120]}")
 
-        if is_pdf_target and not final_data.startswith(b'%PDF-'): raise Exception("PDF Conversion Locked")
+        if is_pdf_target and not final_data.startswith(b'%PDF-'):
+            raise Exception(f"PDF Conversion Locked ({file_name}, mime={mime_type or 'unknown'})")
         with open(destination_path, 'wb') as f: f.write(final_data)
         return final_data
 
@@ -387,25 +400,14 @@ class ArchivalEngine:
             try:
                 results[doc_type]['ts'] = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
                 mime_type = metadata.get('mimeType', '').lower() if metadata else ''
-                # CORRECTED is_google_doc detection
                 is_google_doc = 'google-apps' in mime_type
-                
-                is_modified = True
-                # Fast-skip is ONLY safe when last_record actually has prior content for THIS doc.
-                # Otherwise a NULL slot would be "frozen" forever (Sheet-Switch backfill bug).
                 prev_hash_for_doc = getattr(last_record, f"{doc_type}_hash") if last_record else None
-                if last_record and prev_hash_for_doc:
-                    try:
-                        drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
-                        vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
-                        if (drive_dt - vault_dt).total_seconds() <= 5: is_modified = False
-                    except: pass
 
-                if not is_modified:
-                    results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                    results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
-                    results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
-                    continue
+                # LINK-AGNOSTIC PROTOCOL (SPEC v24):
+                # The Drive URL is a transient pointer, NOT an identity. We do NOT trust modifiedTime,
+                # file_id, or URL equivalence as a shortcut. Every link MUST be downloaded and run
+                # through the Triple-Tier Deduplicator. The 3 tiers are the only source of version truth.
+                logger.info(f"   [LINK-AGNOSTIC] {doc_type.upper()}: downloading raw bytes for content-DNA check.")
 
                 doc_dir = os.path.join(base_project_dir, doc_type.upper())
                 os.makedirs(doc_dir, exist_ok=True)
@@ -415,43 +417,61 @@ class ArchivalEngine:
                     final_bytes = self.download_file(file_id, temp_path, original_url=link)
                     new_hash = hashlib.sha256(final_bytes).hexdigest()
                     
+                    # Always extract text from the freshly-downloaded PDF. Used by Tier 2/3 below AND
+                    # written into the new ledger row so future dedup has a real baseline (this was the
+                    # phantom-v2 root cause: text was previously "" for non-google docs, so re-archive
+                    # always tripped "CONTENT IS NEW" since old_text was empty -> Tier 3 AI branch skipped).
+                    new_text = self._extract_text_from_pdf(temp_path) or ""
+
                     if last_record:
                         # TIER 1: BIT MATCH
-                        old_hash = getattr(last_record, f"{doc_type}_hash")
-                        if new_hash == old_hash:
-                            results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                        old_hash = getattr(last_record, f"{doc_type}_hash", None)
+                        if old_hash and new_hash == old_hash:
+                            results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
                             results[doc_type]['hash'] = old_hash
-                            results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
+                            results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None) or new_text
                             if os.path.exists(temp_path): os.remove(temp_path)
                             continue
 
-                        # TIER 2 & 3: DNA & AI DEDUPLICATION
-                        new_text = self._extract_text_from_pdf(temp_path)
-                        old_text = getattr(last_record, f"{doc_type}_text")
-                        
+                        # TIER 2 & 3: DNA & AI DEDUPLICATION (robust to missing/empty old_text)
+                        old_text = getattr(last_record, f"{doc_type}_text", None) or ""
+                        # Fallback: if the stored text is empty but the prior vault file exists on disk,
+                        # re-extract on the fly so legacy records (or docs without a *_text column) still
+                        # get a fair content comparison instead of being treated as new.
+                        if not old_text:
+                            old_path_disk = getattr(last_record, f"{doc_type}_local_path", None)
+                            if old_path_disk:
+                                abs_old = old_path_disk if os.path.isabs(old_path_disk) else os.path.join(self.archive_root, old_path_disk)
+                                if os.path.exists(abs_old):
+                                    old_text = self._extract_text_from_pdf(abs_old) or ""
+
                         def get_clean_text(t): return re.sub(r'\W+', '', str(t)).lower() if t else ""
                         new_clean = get_clean_text(new_text)
                         old_clean = get_clean_text(old_text)
-                        
+
                         is_dup = False
-                        if new_clean == old_clean: is_dup = True
+                        # Tier 2: alphanumeric DNA match (require non-empty on at least one side to avoid empty==empty false-positive)
+                        if new_clean and new_clean == old_clean:
+                            is_dup = True
+                        # Tier 3: AI cosine similarity
                         elif AI_AVAILABLE and new_clean and old_clean:
                             try:
                                 vect = TfidfVectorizer(min_df=1)
                                 tfidf = vect.fit_transform([old_text, new_text])
-                                sim = (tfidf * tfidf.T).toarray()[0,1]
+                                sim = float((tfidf * tfidf.T).toarray()[0, 1])
+                                logger.info(f"   [TIER-3] {doc_type.upper()} cosine sim = {sim:.4f}")
                                 if sim > 0.98: is_dup = True
-                            except: pass
-                            
+                            except Exception as e:
+                                logger.warning(f"   [TIER-3] cosine failed for {doc_type.upper()}: {str(e)[:80]}")
+
                         if is_dup:
-                            results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                            results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
                             results[doc_type]['hash'] = old_hash
-                            results[doc_type]['text'] = old_text
+                            results[doc_type]['text'] = old_text or new_text
                             if os.path.exists(temp_path): os.remove(temp_path)
                             continue
 
                     # CONTENT IS NEW: classify as BACKFILL (slot was NULL) or REAL EDIT (slot existed, now differs)
-                    new_text = self._extract_text_from_pdf(temp_path) if is_google_doc else ""
                     results[doc_type]['bin'] = final_bytes
                     results[doc_type]['hash'] = new_hash
                     results[doc_type]['text'] = new_text
