@@ -350,22 +350,48 @@ class ArchivalEngine:
         with open(destination_path, 'wb') as f: f.write(final_data)
         return final_data
 
+    @staticmethod
+    def _canonical_key(value, default=''):
+        """Aggressive normalization so the same project key from different sheets always collides:
+        - decode bytes
+        - replace NBSP, zero-width, and other Unicode whitespace with regular spaces
+        - collapse internal whitespace runs to a single space
+        - strip ends, lowercase
+        Without this, 'Sheet A: 2024-2025' and 'Sheet B: 2024-2025\xa0' (or trailing tab) would key separately,
+        causing the cross-sheet phantom v2 bump even though the link is identical.
+        """
+        if value is None: return default
+        s = str(value)
+        # Normalize unicode-equivalent whitespace to ASCII space
+        s = s.replace('\xa0', ' ').replace('\u200b', '').replace('\u200c', '').replace('\u200d', '').replace('\ufeff', '')
+        s = re.sub(r'\s+', ' ', s)
+        return s.strip().lower() or default
+
     def archive_project(self, project_data, workbook_name="Archives", batch_id=None, archived_by=None):
-        project_id = str(project_data.get('project_id', 'Unknown')).strip().lower()
+        project_id = self._canonical_key(project_data.get('project_id'), 'unknown')
         project_title = str(project_data.get('project_title', 'Untitled')).strip()
         clean_title = project_title.replace(' ', '_').replace('/', '_').replace('\\', '_')
-        academic_year = str(project_data.get('academic_year', 'General')).strip()
-        
+        # CRITICAL: academic_year must be canonicalized the same way as project_id so the cross-sheet
+        # lookup actually collides. Previously this was only .strip() (no lowercase, no NBSP handling).
+        academic_year = self._canonical_key(project_data.get('academic_year'), 'general')
+
         base_project_dir = os.path.join(self.archive_root, workbook_name, academic_year, batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}")
         os.makedirs(base_project_dir, exist_ok=True)
-        
+
         # TIER 0: GLOBAL CROSS-SHEET LOCK (project_id + academic_year is the canonical identity)
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id, academic_year=academic_year
         ).order_by(ArchivalLedger.version.desc()).first()
-        
-        if not last_record:
-            logger.info(f"   [FAST-PATH] No prior record for {project_id}@{academic_year}; skipping all dedup tiers (v1 cold archive).")
+
+        if last_record:
+            logger.info(f"   [LOCK-HIT] Found prior record for key='{project_id}@{academic_year}': v={last_record.version}, archived_at={last_record.archived_at}, workbook={last_record.workbook_name}")
+        else:
+            # Show what's in the DB for this project_id (regardless of year) so missed-key bugs are obvious.
+            other = ArchivalLedger.query.filter_by(project_id=project_id).order_by(ArchivalLedger.version.desc()).first()
+            if other:
+                logger.warning(f"   [LOCK-MISS] No record for key='{project_id}@{academic_year}', BUT same project_id exists under academic_year='{other.academic_year}' (v={other.version}). Cross-sheet key mismatch suspected.")
+            else:
+                logger.info(f"   [FAST-PATH] No prior record for {project_id}@{academic_year}; skipping all dedup tiers (v1 cold archive).")
         
         doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'presentation', 'source_code', 'database', 'readme']
         results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'is_backfill': False, 'bin': b'', 'ts': None, 'text': '', 'url': None} for dt in doc_types}
@@ -426,11 +452,13 @@ class ArchivalEngine:
                     if last_record:
                         # TIER 1: BIT MATCH
                         old_hash = getattr(last_record, f"{doc_type}_hash", None)
+                        logger.info(f"   [TIER-1] {doc_type.upper()}: old_hash={(old_hash or 'NULL')[:12]}..., new_hash={new_hash[:12]}..., match={bool(old_hash and new_hash == old_hash)}")
                         if old_hash and new_hash == old_hash:
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
                             results[doc_type]['hash'] = old_hash
                             results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None) or new_text
                             if os.path.exists(temp_path): os.remove(temp_path)
+                            logger.info(f"   [DEDUP-HIT T1] {doc_type.upper()}: bit-identical with v{last_record.version}")
                             continue
 
                         # TIER 2 & 3: DNA & AI DEDUPLICATION (robust to missing/empty old_text)
@@ -449,27 +477,38 @@ class ArchivalEngine:
                         new_clean = get_clean_text(new_text)
                         old_clean = get_clean_text(old_text)
 
+                        logger.info(f"   [TIER-2] {doc_type.upper()}: clean_old_len={len(old_clean)}, clean_new_len={len(new_clean)}, exact_match={bool(new_clean and new_clean == old_clean)}")
+
                         is_dup = False
+                        tier_hit = None
                         # Tier 2: alphanumeric DNA match (require non-empty on at least one side to avoid empty==empty false-positive)
                         if new_clean and new_clean == old_clean:
                             is_dup = True
+                            tier_hit = 'T2'
                         # Tier 3: AI cosine similarity
                         elif AI_AVAILABLE and new_clean and old_clean:
                             try:
                                 vect = TfidfVectorizer(min_df=1)
                                 tfidf = vect.fit_transform([old_text, new_text])
                                 sim = float((tfidf * tfidf.T).toarray()[0, 1])
-                                logger.info(f"   [TIER-3] {doc_type.upper()} cosine sim = {sim:.4f}")
-                                if sim > 0.98: is_dup = True
+                                logger.info(f"   [TIER-3] {doc_type.upper()} cosine sim = {sim:.4f} (threshold > 0.98)")
+                                if sim > 0.98:
+                                    is_dup = True
+                                    tier_hit = 'T3'
                             except Exception as e:
                                 logger.warning(f"   [TIER-3] cosine failed for {doc_type.upper()}: {str(e)[:80]}")
+                        else:
+                            logger.warning(f"   [TIER-3 SKIPPED] {doc_type.upper()}: AI_AVAILABLE={AI_AVAILABLE}, new_clean_empty={not new_clean}, old_clean_empty={not old_clean}")
 
                         if is_dup:
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
                             results[doc_type]['hash'] = old_hash
                             results[doc_type]['text'] = old_text or new_text
                             if os.path.exists(temp_path): os.remove(temp_path)
+                            logger.info(f"   [DEDUP-HIT {tier_hit}] {doc_type.upper()}: content-DNA match with v{last_record.version}")
                             continue
+                        else:
+                            logger.warning(f"   [DEDUP-MISS] {doc_type.upper()}: ALL 3 TIERS MISSED -> will be flagged as edit/backfill. (this is what would cause a v-bump if not a backfill)")
 
                     # CONTENT IS NEW: classify as BACKFILL (slot was NULL) or REAL EDIT (slot existed, now differs)
                     results[doc_type]['bin'] = final_bytes
