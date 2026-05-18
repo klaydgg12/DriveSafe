@@ -404,9 +404,37 @@ class ArchivalEngine:
                 results[doc_type]['ts'] = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
                 mime_type = metadata.get('mimeType', '').lower() if metadata else ''
                 is_google_doc = 'google-apps' in mime_type
-                
-                # We reset the raw byte tracker before downloading
                 self._last_source_hash = None
+
+                # =============================================================
+                # TIER 0: DRIVE modifiedTime FINGERPRINT  (the user-requested fix)
+                # =============================================================
+                # If Drive itself says this file hasn't been modified since we archived v1, the content
+                # CANNOT have changed. We don't need to download, convert, extract, or compare anything.
+                # This is the most authoritative dedup signal: it comes straight from Drive's server.
+                #
+                # We compare metadata.modifiedTime (when the student last touched the file on Drive)
+                # against last_record.archived_at (when we archived v1). If Drive's timestamp is older
+                # or equal (with a small grace window for clock skew), we know the content is identical.
+                #
+                # This single check eliminates every phantom v2 caused by non-deterministic exports,
+                # PDF extraction drift, or cross-sheet noise.
+                if last_record and metadata and metadata.get('modifiedTime') and getattr(last_record, f"{doc_type}_hash", None):
+                    try:
+                        drive_dt = datetime.datetime.fromisoformat(metadata['modifiedTime'].replace('Z', '+00:00'))
+                        vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc) if last_record.archived_at.tzinfo is None else last_record.archived_at
+                        delta = (drive_dt - vault_dt).total_seconds()
+                        if delta <= 60:   # 60s grace for clock skew / NTP drift
+                            results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
+                            results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash", None)
+                            results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None) or ""
+                            results[doc_type]['url'] = link
+                            logger.info(f"   [DEDUP-HIT T0] {doc_type.upper()}: Drive modifiedTime ({metadata['modifiedTime']}) <= archived_at ({last_record.archived_at}) -- file untouched since v{last_record.version}, skipping download.")
+                            continue
+                        else:
+                            logger.info(f"   [TIER-0 MISS] {doc_type.upper()}: Drive modifiedTime is {int(delta)}s newer than last archive; running full dedup ladder.")
+                    except Exception as e:
+                        logger.warning(f"   [TIER-0] timestamp parse failed for {doc_type.upper()}: {str(e)[:80]} -- falling through to download.")
 
                 doc_dir = os.path.join(base_project_dir, doc_type.upper())
                 os.makedirs(doc_dir, exist_ok=True)
@@ -562,6 +590,33 @@ class ArchivalEngine:
                     return {'status': 'unchanged', 'version': last_record.version, 'error': f"backfill failed: {str(e)[:80]}"}
             if last_record: return {'status': 'unchanged', 'version': last_record.version}
             else: return {'status': 'failed', 'error': error_msg.strip()}
+
+        # DIAGNOSTIC: if total_changed > 0, log EXACTLY which docs are flagged is_changed.
+        # This is the line that tells us at-a-glance whether a v-bump was caused by a real edit
+        # or a phantom dedup miss on one specific doc.
+        changed_docs = [dt for dt in doc_types if results[dt].get('is_changed')]
+        logger.warning(f"   [V-BUMP] total_changed={total_changed}, changed_docs={changed_docs}, backfilled={backfilled} -- creating v{(last_record.version if last_record else 0) + 1}")
+
+        # Even when a v-bump happens, persist any soft-migrations into v1 first so we don't lose
+        # them. Otherwise the v1 row keeps a stale legacy hash forever and re-dedup never settles.
+        if last_record and backfilled > 0:
+            try:
+                MAX_BIN_SIZE_SM = 15 * 1024 * 1024
+                for dt in doc_types:
+                    if not results[dt].get('is_backfill'): continue
+                    setattr(last_record, f"{dt}_local_path", results[dt]['path'])
+                    setattr(last_record, f"{dt}_hash", results[dt]['hash'])
+                    setattr(last_record, f"{dt}_original_url", results[dt]['url'])
+                    if hasattr(last_record, f"{dt}_text"):
+                        setattr(last_record, f"{dt}_text", results[dt]['text'])
+                    if hasattr(last_record, f"{dt}_binary"):
+                        b = results[dt].get('bin')
+                        setattr(last_record, f"{dt}_binary", b if b and len(b) <= MAX_BIN_SIZE_SM else None)
+                db.session.commit()
+                logger.info(f"   [SOFT-MIGRATE PRE-BUMP] Upgraded {backfilled} soft-migrated slot(s) on v{last_record.version} before creating v{(last_record.version) + 1}.")
+            except Exception as e:
+                db.session.rollback()
+                logger.warning(f"   [SOFT-MIGRATE PRE-BUMP] failed: {str(e)[:120]}")
 
         status = "partial" if error_msg else "archived"
         current_version = (last_record.version if last_record else 0) + 1
