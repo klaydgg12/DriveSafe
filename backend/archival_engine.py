@@ -14,7 +14,7 @@ from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from models import db, ArchivalLedger
 
-# AI Import for Tier 3 Deduplication
+# AI Import for Tier 3
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
@@ -36,11 +36,9 @@ class ArchivalEngine:
         self.identity_label = "TEACHER" if user_credentials else "ROBOT"
         self.creds = user_credentials
         
-        # Primary Identity (Teacher)
         if user_credentials:
             self.service = build('drive', 'v3', credentials=user_credentials, cache_discovery=False)
         
-        # Fallback Identity (Service Account "Robot")
         self.sa_service = None
         if service_account_json_path:
             try:
@@ -54,14 +52,17 @@ class ArchivalEngine:
                 if not hasattr(self, 'service'):
                     self.service = self.sa_service
             except Exception as e:
-                logger.error(f"Failed to init service account: {e}")
+                logger.error(f"Failed to init service account fallback: {e}")
         
         if not hasattr(self, 'service'):
              raise ValueError("No authentication method provided for ArchivalEngine")
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v24 Canonical (Deep Polish) Initialized")
+        
+        # State tracker for Raw Byte Hashing
+        self._last_source_hash = None
+        logger.info(f"ArchivalEngine Master v25 Initialized (Raw Byte Pipeline)")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -86,7 +87,7 @@ class ArchivalEngine:
             if self.sa_service:
                 try: meta = _fetch(self.sa_service, file_id)
                 except: meta = None
-        # SHORTCUT RESOLUTION: follow targetId to real file (fixes 403 on shortcut/Shared-Drive entries)
+        
         if meta and meta.get('mimeType') == 'application/vnd.google-apps.shortcut':
             target_id = (meta.get('shortcutDetails') or {}).get('targetId')
             if target_id and target_id != meta.get('id'):
@@ -99,7 +100,6 @@ class ArchivalEngine:
                         except: pass
         return meta
 
-    # Keyword sets for matching deliverable filenames inside Drive folders
     HINT_KEYWORDS = {
         'SRS':            ['srs', 'requirements specification', 'software requirements'],
         'SDD':            ['sdd', 'design description', 'software design'],
@@ -129,10 +129,9 @@ class ArchivalEngine:
             return []
 
     def _score_candidate(self, file_meta, keywords):
-        """Higher = better match. PDFs/docs preferred; keyword hits bonus."""
         name = (file_meta.get('name') or '').lower()
         mime = (file_meta.get('mimeType') or '').lower()
-        if mime == 'application/vnd.google-apps.folder': return -1   # folders are not deliverables
+        if mime == 'application/vnd.google-apps.folder': return -1
         score = 0
         for kw in keywords:
             if kw and kw in name: score += 10
@@ -142,13 +141,10 @@ class ArchivalEngine:
         elif 'presentation' in mime or 'powerpoint' in mime: score += 3
         elif 'spreadsheet' in mime or 'excel' in mime: score += 2
         elif mime == 'application/vnd.google-apps.shortcut': score += 1
-        # demote obvious noise
         if any(x in name for x in ['old', 'backup', 'archive', 'draft (old)', 'deprecated']): score -= 3
         return score
 
     def _resolve_folder(self, folder_id, target_hint=None, _depth=0):
-        """Pick the best deliverable inside `folder_id`. Recurses ONE level into subfolders
-        when the top level only contains folders (e.g. STD/Final/STD_v3.pdf)."""
         try:
             files = self._list_children(folder_id)
             if not files and self.sa_service:
@@ -159,7 +155,6 @@ class ArchivalEngine:
             if target_hint:
                 keywords = self.HINT_KEYWORDS.get(target_hint.upper(), [target_hint.lower()])
 
-            # 1) Score all non-folder children
             best = None
             best_score = -999
             for f in files:
@@ -168,10 +163,8 @@ class ArchivalEngine:
                     best_score = s
                     best = f
 
-            # 2) If the only viable picks are folders (or score is poor), recurse one level
             if (best is None or best_score <= 0) and _depth < 1:
                 subfolders = [f for f in files if f.get('mimeType') == 'application/vnd.google-apps.folder']
-                # Prefer subfolders whose name hints at the deliverable / "final"
                 def sub_priority(sf):
                     n = (sf.get('name') or '').lower()
                     p = 0
@@ -183,17 +176,14 @@ class ArchivalEngine:
                 for sf in subfolders[:5]:
                     fid_sub, meta_sub = self._resolve_folder(sf['id'], target_hint=target_hint, _depth=_depth+1)
                     if fid_sub:
-                        logger.info(f"   [FOLDER-RECURSE] {target_hint}: descended into '{sf.get('name')}' -> '{(meta_sub or {}).get('name')}'")
                         return fid_sub, meta_sub
 
             if not best: return None, None
             fid = best['id']
             if best.get('mimeType') == 'application/vnd.google-apps.shortcut':
                 fid = (best.get('shortcutDetails') or {}).get('targetId') or fid
-            logger.info(f"   [FOLDER-PICK] {target_hint}: '{best.get('name')}' (mime={best.get('mimeType')}, score={best_score})")
             return fid, best
         except Exception as e:
-            logger.warning(f"   [FOLDER] resolve failed: {str(e)[:120]}")
             return None, None
 
     def _extract_text_from_pdf(self, file_path):
@@ -205,18 +195,14 @@ class ArchivalEngine:
         except: return ""
 
     def validate_binary(self, data, is_pdf=True):
-        """Reject HTML pages always; enforce %PDF- + reasonable size only when caller demands a PDF.
-        For non-PDF targets, allow tiny files (e.g. short README.md) as long as they aren't HTML."""
         if not data: return False
         head = data[:2048].lstrip().lower()
-        # Catch any HTML response (login pages, error pages, confirmation pages, generic 4xx/5xx HTML)
         if head.startswith(b'<!doctype html') or head.startswith(b'<html') or b'<html' in head[:512]:
             return False
         if is_pdf:
             if len(data) < 500: return False
             if not data.startswith(b'%PDF-'): return False
         else:
-            # Non-strict path: still reject obviously empty / single-byte responses.
             if len(data) < 4: return False
         return True
 
@@ -240,18 +226,17 @@ class ArchivalEngine:
     def download_file(self, file_id, destination_path, original_url=None):
         meta = self._get_file_metadata(file_id)
         if meta and meta.get('id'): file_id = meta.get('id')
+        
         mime_type = meta.get('mimeType', '').lower() if meta else 'unknown'
         file_name = meta.get('name', 'unknown') if meta else 'Document'
         is_google = 'google-apps' in mime_type or (original_url and 'docs.google.com' in str(original_url))
         is_pdf_target = destination_path.lower().endswith('.pdf')
-        # Strict %PDF- check is only meaningful when Google MUST emit a PDF (native-doc export).
-        # For raw uploads (.docx/.pdf/.pptx/etc.) we accept any non-HTML binary and convert later.
         strict_pdf_check = is_pdf_target and is_google
-        
+
         logger.info(f"[{self.identity_label}] ARCHIVING: {file_name} (mime={mime_type or 'n/a'}, native={is_google})")
         final_data = None
-        
-        # 1. Mirror (high-fidelity Chrome 121)
+
+        # 1. Mirror
         try:
             url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=False)
             headers = {
@@ -296,7 +281,7 @@ class ArchivalEngine:
                 while not done: _, done = downloader.next_chunk()
                 if self.validate_binary(fh.getvalue(), is_pdf=strict_pdf_check): final_data = fh.getvalue()
             except Exception as e:
-                logger.warning(f"   [API] export/get_media failed for {file_name}: {str(e)[:120]}")
+                logger.warning(f"   [API] get_media failed for {file_name}: {str(e)[:120]}")
 
         # 4. Service Account Override
         if not final_data and self.sa_service:
@@ -313,7 +298,12 @@ class ArchivalEngine:
 
         if not final_data: raise Exception(f"Access Denied for {file_name} (mime={mime_type or 'unknown'})")
 
-        # Office/Text -> PDF conversion (via temporary Google Doc)
+        # --- CRITICAL FIX: RAW SOURCE HASH ---
+        # Hash the raw bytes downloaded BEFORE any lossy Google conversion occurs.
+        # This guarantees deterministic hashes for uploaded docs (.docx, .md, .pptx)
+        self._last_source_hash = hashlib.sha256(final_data).hexdigest()
+
+        # Office/Text -> PDF conversion
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
             lower_name = str(file_name).lower()
             is_office = final_data.startswith(b'PK\x03\x04') or lower_name.endswith(('.docx', '.doc'))
@@ -347,22 +337,14 @@ class ArchivalEngine:
 
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
             raise Exception(f"PDF Conversion Locked ({file_name}, mime={mime_type or 'unknown'})")
+            
         with open(destination_path, 'wb') as f: f.write(final_data)
         return final_data
 
     @staticmethod
     def _canonical_key(value, default=''):
-        """Aggressive normalization so the same project key from different sheets always collides:
-        - decode bytes
-        - replace NBSP, zero-width, and other Unicode whitespace with regular spaces
-        - collapse internal whitespace runs to a single space
-        - strip ends, lowercase
-        Without this, 'Sheet A: 2024-2025' and 'Sheet B: 2024-2025\xa0' (or trailing tab) would key separately,
-        causing the cross-sheet phantom v2 bump even though the link is identical.
-        """
         if value is None: return default
         s = str(value)
-        # Normalize unicode-equivalent whitespace to ASCII space
         s = s.replace('\xa0', ' ').replace('\u200b', '').replace('\u200c', '').replace('\u200d', '').replace('\ufeff', '')
         s = re.sub(r'\s+', ' ', s)
         return s.strip().lower() or default
@@ -371,14 +353,11 @@ class ArchivalEngine:
         project_id = self._canonical_key(project_data.get('project_id'), 'unknown')
         project_title = str(project_data.get('project_title', 'Untitled')).strip()
         clean_title = project_title.replace(' ', '_').replace('/', '_').replace('\\', '_')
-        # CRITICAL: academic_year must be canonicalized the same way as project_id so the cross-sheet
-        # lookup actually collides. Previously this was only .strip() (no lowercase, no NBSP handling).
         academic_year = self._canonical_key(project_data.get('academic_year'), 'general')
 
         base_project_dir = os.path.join(self.archive_root, workbook_name, academic_year, batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}")
         os.makedirs(base_project_dir, exist_ok=True)
 
-        # TIER 0: GLOBAL CROSS-SHEET LOCK (project_id + academic_year is the canonical identity)
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id, academic_year=academic_year
         ).order_by(ArchivalLedger.version.desc()).first()
@@ -386,31 +365,29 @@ class ArchivalEngine:
         if last_record:
             logger.info(f"   [LOCK-HIT] Found prior record for key='{project_id}@{academic_year}': v={last_record.version}, archived_at={last_record.archived_at}, workbook={last_record.workbook_name}")
         else:
-            # Show what's in the DB for this project_id (regardless of year) so missed-key bugs are obvious.
             other = ArchivalLedger.query.filter_by(project_id=project_id).order_by(ArchivalLedger.version.desc()).first()
             if other:
-                logger.warning(f"   [LOCK-MISS] No record for key='{project_id}@{academic_year}', BUT same project_id exists under academic_year='{other.academic_year}' (v={other.version}). Cross-sheet key mismatch suspected.")
+                logger.warning(f"   [LOCK-MISS] No record for key='{project_id}@{academic_year}', BUT same project_id exists under academic_year='{other.academic_year}' (v={other.version}).")
             else:
                 logger.info(f"   [FAST-PATH] No prior record for {project_id}@{academic_year}; skipping all dedup tiers (v1 cold archive).")
-        
+
         doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'presentation', 'source_code', 'database', 'readme']
         results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'is_backfill': False, 'bin': b'', 'ts': None, 'text': '', 'url': None} for dt in doc_types}
-        total_changed = 0   # real edits to existing docs => bump version
-        backfilled = 0      # NULL slots in last_record that we now have content for => in-place update, no v-bump
+        total_changed = 0   
+        backfilled = 0      
         error_msg = ""
 
         for doc_type in doc_types:
             link = project_data.get(f'{doc_type}_link')
             results[doc_type]['url'] = link
             
-            # GAP-FILLING PERSISTENCE
             if not link and last_record:
-                old_path = getattr(last_record, f"{doc_type}_local_path")
+                old_path = getattr(last_record, f"{doc_type}_local_path", None)
                 if old_path:
                     results[doc_type]['path'] = old_path
-                    results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
-                    results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
-                    results[doc_type]['url'] = getattr(last_record, f"{doc_type}_original_url")
+                    results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash", None)
+                    results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None)
+                    results[doc_type]['url'] = getattr(last_record, f"{doc_type}_original_url", None)
                     continue
             
             if not link: continue
@@ -427,13 +404,9 @@ class ArchivalEngine:
                 results[doc_type]['ts'] = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
                 mime_type = metadata.get('mimeType', '').lower() if metadata else ''
                 is_google_doc = 'google-apps' in mime_type
-                prev_hash_for_doc = getattr(last_record, f"{doc_type}_hash") if last_record else None
-
-                # LINK-AGNOSTIC PROTOCOL (SPEC v24):
-                # The Drive URL is a transient pointer, NOT an identity. We do NOT trust modifiedTime,
-                # file_id, or URL equivalence as a shortcut. Every link MUST be downloaded and run
-                # through the Triple-Tier Deduplicator. The 3 tiers are the only source of version truth.
-                logger.info(f"   [LINK-AGNOSTIC] {doc_type.upper()}: downloading raw bytes for content-DNA check.")
+                
+                # We reset the raw byte tracker before downloading
+                self._last_source_hash = None
 
                 doc_dir = os.path.join(base_project_dir, doc_type.upper())
                 os.makedirs(doc_dir, exist_ok=True)
@@ -441,31 +414,53 @@ class ArchivalEngine:
 
                 try:
                     final_bytes = self.download_file(file_id, temp_path, original_url=link)
-                    new_hash = hashlib.sha256(final_bytes).hexdigest()
-                    
-                    # Always extract text from the freshly-downloaded PDF. Used by Tier 2/3 below AND
-                    # written into the new ledger row so future dedup has a real baseline (this was the
-                    # phantom-v2 root cause: text was previously "" for non-google docs, so re-archive
-                    # always tripped "CONTENT IS NEW" since old_text was empty -> Tier 3 AI branch skipped).
                     new_text = self._extract_text_from_pdf(temp_path) or ""
 
+                    # =============================================================
+                    # CANONICAL CONTENT FINGERPRINT (Tier 1 hash)
+                    # =============================================================
+                    # Problem we are solving: Google's PDF export of a native gdoc is non-deterministic
+                    # (fresh timestamp + document-id every call), so hashing the EXPORTED bytes makes
+                    # Tier 1 miss every single time for SRS/SDD-style gdoc links. That's why your screenshot
+                    # shows SRS at v2 with a different hash even though nothing changed.
+                    #
+                    # Fix: hash the CONTENT (alphanumeric-stripped extracted text), not the bytes. The
+                    # content is invariant to Drive's metadata noise, so identical document content always
+                    # produces the same hash regardless of how many times you re-archive or which sheet
+                    # you launch from.
+                    #
+                    # For files where text extraction is unreliable (image-only PDFs, code, etc.) we fall
+                    # back to the raw Drive bytes hash (deterministic for uploaded files).
+                    #
+                    # Hashes are prefixed ("txt:" / "raw:") so we can distinguish the two strategies and
+                    # treat legacy (unprefixed) hashes as "Tier 1 incompatible" -> let Tier 2/3 catch them
+                    # and soft-migrate to the new prefixed format.
+                    text_clean_for_hash = re.sub(r'\W+', '', new_text).lower()
+                    if len(text_clean_for_hash) >= 50:
+                        new_hash = "txt:" + hashlib.sha256(text_clean_for_hash.encode('utf-8')).hexdigest()
+                        hash_kind = "content"
+                    else:
+                        raw = self._last_source_hash or hashlib.sha256(final_bytes).hexdigest()
+                        new_hash = "raw:" + raw
+                        hash_kind = "raw-fallback"
+
                     if last_record:
-                        # TIER 1: BIT MATCH
+                        # TIER 1: CANONICAL HASH MATCH
                         old_hash = getattr(last_record, f"{doc_type}_hash", None)
-                        logger.info(f"   [TIER-1] {doc_type.upper()}: old_hash={(old_hash or 'NULL')[:12]}..., new_hash={new_hash[:12]}..., match={bool(old_hash and new_hash == old_hash)}")
-                        if old_hash and new_hash == old_hash:
+                        old_is_legacy = bool(old_hash) and not (old_hash.startswith("txt:") or old_hash.startswith("raw:"))
+                        drive_md5 = metadata.get('md5Checksum') if metadata else "N/A"
+                        logger.info(f"   [TIER-1] {doc_type.upper()} ({hash_kind}, text_len={len(text_clean_for_hash)}): old={(old_hash or 'NULL')[:16]}..., new={new_hash[:16]}..., legacy={old_is_legacy}, drive_md5={drive_md5}")
+
+                        if old_hash and not old_is_legacy and new_hash == old_hash:
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
                             results[doc_type]['hash'] = old_hash
                             results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None) or new_text
                             if os.path.exists(temp_path): os.remove(temp_path)
-                            logger.info(f"   [DEDUP-HIT T1] {doc_type.upper()}: bit-identical with v{last_record.version}")
+                            logger.info(f"   [DEDUP-HIT T1] {doc_type.upper()}: deterministic bit-identical with v{last_record.version}")
                             continue
 
-                        # TIER 2 & 3: DNA & AI DEDUPLICATION (robust to missing/empty old_text)
+                        # TIER 2 & 3: DNA & AI DEDUPLICATION 
                         old_text = getattr(last_record, f"{doc_type}_text", None) or ""
-                        # Fallback: if the stored text is empty but the prior vault file exists on disk,
-                        # re-extract on the fly so legacy records (or docs without a *_text column) still
-                        # get a fair content comparison instead of being treated as new.
                         if not old_text:
                             old_path_disk = getattr(last_record, f"{doc_type}_local_path", None)
                             if old_path_disk:
@@ -477,82 +472,89 @@ class ArchivalEngine:
                         new_clean = get_clean_text(new_text)
                         old_clean = get_clean_text(old_text)
 
-                        logger.info(f"   [TIER-2] {doc_type.upper()}: clean_old_len={len(old_clean)}, clean_new_len={len(new_clean)}, exact_match={bool(new_clean and new_clean == old_clean)}")
-
                         is_dup = False
                         tier_hit = None
-                        # Tier 2: alphanumeric DNA match (require non-empty on at least one side to avoid empty==empty false-positive)
+                        
+                        # Tier 2: alphanumeric DNA
                         if new_clean and new_clean == old_clean:
                             is_dup = True
                             tier_hit = 'T2'
-                        # Tier 3: AI cosine similarity
+                        # Tier 3: AI Similarity
                         elif AI_AVAILABLE and new_clean and old_clean:
                             try:
                                 vect = TfidfVectorizer(min_df=1)
                                 tfidf = vect.fit_transform([old_text, new_text])
                                 sim = float((tfidf * tfidf.T).toarray()[0, 1])
-                                logger.info(f"   [TIER-3] {doc_type.upper()} cosine sim = {sim:.4f} (threshold > 0.98)")
+                                logger.info(f"   [TIER-3] {doc_type.upper()} cosine sim = {sim:.4f}")
                                 if sim > 0.98:
                                     is_dup = True
                                     tier_hit = 'T3'
                             except Exception as e:
                                 logger.warning(f"   [TIER-3] cosine failed for {doc_type.upper()}: {str(e)[:80]}")
-                        else:
-                            logger.warning(f"   [TIER-3 SKIPPED] {doc_type.upper()}: AI_AVAILABLE={AI_AVAILABLE}, new_clean_empty={not new_clean}, old_clean_empty={not old_clean}")
 
                         if is_dup:
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
-                            results[doc_type]['hash'] = old_hash
+                            
+                            # SOFT MIGRATION: 
+                            # If T2/T3 found it's a duplicate, we update the hash to the NEW Raw Byte Hash 
+                            # in memory, so future runs hit Tier 1 instantly.
+                            results[doc_type]['hash'] = new_hash 
+                            
                             results[doc_type]['text'] = old_text or new_text
+                            
+                            # Soft Migration flag to write to database
+                            results[doc_type]['is_backfill'] = True 
+                            backfilled += 1
+                            
                             if os.path.exists(temp_path): os.remove(temp_path)
-                            logger.info(f"   [DEDUP-HIT {tier_hit}] {doc_type.upper()}: content-DNA match with v{last_record.version}")
+                            logger.info(f"   [DEDUP-HIT {tier_hit}] {doc_type.upper()}: Soft-Migrating to raw-byte hash on v{last_record.version}")
                             continue
-                        else:
-                            logger.warning(f"   [DEDUP-MISS] {doc_type.upper()}: ALL 3 TIERS MISSED -> will be flagged as edit/backfill. (this is what would cause a v-bump if not a backfill)")
 
-                    # CONTENT IS NEW: classify as BACKFILL (slot was NULL) or REAL EDIT (slot existed, now differs)
                     results[doc_type]['bin'] = final_bytes
                     results[doc_type]['hash'] = new_hash
                     results[doc_type]['text'] = new_text
+                    
+                    prev_hash_for_doc = getattr(last_record, f"{doc_type}_hash") if last_record else None
                     is_backfill = bool(last_record) and not prev_hash_for_doc
+                    
                     if is_backfill:
                         backfilled += 1
                         results[doc_type]['is_backfill'] = True
-                        file_version = last_record.version  # belongs to existing version (no bump)
+                        file_version = last_record.version  
                         logger.info(f"   [BACKFILL] {doc_type.upper()} was missing in v{file_version}; filling without bump.")
                     else:
                         total_changed += 1
                         results[doc_type]['is_changed'] = True
                         file_version = (last_record.version if last_record else 0) + 1
+                        
                     final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{file_version}.pdf")
                     os.rename(temp_path, final_path)
                     results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
                 except Exception as e:
-                    if last_record and getattr(last_record, f"{doc_type}_local_path"):
-                        results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                        results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
-                        results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
+                    if last_record and getattr(last_record, f"{doc_type}_local_path", None):
+                        results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
+                        results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash", None)
+                        results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None)
                     else: raise e
             except Exception as e:
                 error_msg += f"{doc_type.upper()}: {str(e)[:50]}; "
 
-        # NO real edits => either fully unchanged, or we backfill the existing record in-place (NO v-bump)
         if total_changed == 0:
             if last_record and backfilled > 0:
                 try:
                     MAX_BIN_SIZE_BF = 15 * 1024 * 1024
                     for dt in doc_types:
-                        if not results[dt]['is_backfill']: continue
+                        if not results[dt].get('is_backfill'): continue
                         setattr(last_record, f"{dt}_local_path", results[dt]['path'])
-                        setattr(last_record, f"{dt}_hash", results[dt]['hash'])
+                        setattr(last_record, f"{dt}_hash", results[dt]['hash']) # Upgrades to raw hash
                         setattr(last_record, f"{dt}_original_url", results[dt]['url'])
                         if hasattr(last_record, f"{dt}_text"):
                             setattr(last_record, f"{dt}_text", results[dt]['text'])
                         if hasattr(last_record, f"{dt}_binary"):
-                            b = results[dt]['bin']
+                            b = results[dt].get('bin')
                             setattr(last_record, f"{dt}_binary", b if b and len(b) <= MAX_BIN_SIZE_BF else None)
                     db.session.commit()
-                    logger.info(f"   [BACKFILL-COMMIT] Filled {backfilled} gap(s) into v{last_record.version}; no version bump.")
+                    logger.info(f"   [BACKFILL/MIGRATE] Saved {backfilled} update(s) to v{last_record.version} without version bump.")
                     return {'status': 'unchanged', 'version': last_record.version, 'backfilled': backfilled}
                 except Exception as e:
                     db.session.rollback()
@@ -565,7 +567,7 @@ class ArchivalEngine:
         current_version = (last_record.version if last_record else 0) + 1
         MAX_BIN_SIZE = 15 * 1024 * 1024 
         def safe_bin(dt):
-            b = results[dt]['bin']
+            b = results[dt].get('bin')
             return b if b and len(b) <= MAX_BIN_SIZE else None
 
         try:
