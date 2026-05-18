@@ -16,7 +16,7 @@ from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from models import db, ArchivalLedger
 
-# AI Import for Tier 3
+# AI Import for Tier 3 Deduplication
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
@@ -64,7 +64,7 @@ class ArchivalEngine:
         
         # Thread-local storage for parallel-safe hash tracking
         self._tls = threading.local()
-        logger.info(f"ArchivalEngine Master v26 Initialized (High-Velocity Protocol)")
+        logger.info(f"ArchivalEngine Master v27 Canonical Initialized")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -189,7 +189,7 @@ class ArchivalEngine:
             return None, None
 
     def _extract_text_from_pdf(self, file_path):
-        # SPEED: Reduced from 50 to 8 pages. Enough for DNA but much faster.
+        # High-Speed DNA extraction (8 pages)
         try:
             text = ""
             with pdfplumber.open(file_path) as pdf:
@@ -238,8 +238,8 @@ class ArchivalEngine:
 
         logger.info(f"[{self.identity_label}] ARCHIVING: {file_name} (mime={mime_type or 'n/a'}, native={is_google})")
         final_data = None
-
-        # 1. Mirror - Skip for native Google Docs to save 1 full roundtrip
+        
+        # 1. Digital Twin Mirror (Optimized for speed)
         if not is_google:
             try:
                 url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=False)
@@ -247,12 +247,6 @@ class ArchivalEngine:
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                     'Accept': 'application/pdf,application/octet-stream,*/*',
                     'Referer': 'https://docs.google.com/',
-                    'sec-ch-ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-                    'sec-ch-ua-mobile': '?0',
-                    'sec-ch-ua-platform': '"Windows"',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'same-origin',
                 }
                 if self.creds:
                     if hasattr(self.creds, 'valid') and not self.creds.valid: self.creds.refresh(requests.Session())
@@ -281,8 +275,7 @@ class ArchivalEngine:
                 done = False
                 while not done: _, done = downloader.next_chunk()
                 if self.validate_binary(fh.getvalue(), is_pdf=strict_pdf_check): final_data = fh.getvalue()
-            except Exception as e:
-                logger.warning(f"   [API] get_media failed for {file_name}: {str(e)[:120]}")
+            except: pass
 
         # 4. Service Account Override
         if not final_data and self.sa_service:
@@ -294,12 +287,11 @@ class ArchivalEngine:
                 done = False
                 while not done: _, done = downloader.next_chunk()
                 if self.validate_binary(fh.getvalue(), is_pdf=strict_pdf_check): final_data = fh.getvalue()
-            except Exception as e:
-                logger.warning(f"   [SA] fallback failed for {file_name}: {str(e)[:120]}")
+            except: pass
 
         if not final_data: raise Exception(f"Access Denied for {file_name} (mime={mime_type or 'unknown'})")
 
-        # RAW SOURCE HASH
+        # RAW SOURCE HASH - Deterministic bits for uploaded files
         self._tls.last_source_hash = hashlib.sha256(final_data).hexdigest()
 
         # Office/Text -> PDF conversion
@@ -320,7 +312,7 @@ class ArchivalEngine:
                     temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id', supportsAllDrives=True).execute()
                     t_id = temp_file.get('id')
                     try:
-                        time.sleep(2) # Speed: Reduced from 5s to 2s
+                        time.sleep(2)
                         req = self.service.files().export_media(fileId=t_id, mimeType='application/pdf')
                         fh = io.BytesIO()
                         dld = MediaIoBaseDownload(fh, req)
@@ -331,12 +323,9 @@ class ArchivalEngine:
                     finally:
                         try: self.service.files().delete(fileId=t_id, supportsAllDrives=True).execute()
                         except: pass
-                except Exception as e:
-                    logger.warning(f"   [CONVERT] upload-as-gdoc failed for {file_name}: {str(e)[:120]}")
+                except: pass
 
-        if is_pdf_target and not final_data.startswith(b'%PDF-'):
-            raise Exception(f"PDF Conversion Locked ({file_name}, mime={mime_type or 'unknown'})")
-            
+        if is_pdf_target and not final_data.startswith(b'%PDF-'): raise Exception("PDF Conversion Locked")
         with open(destination_path, 'wb') as f: f.write(final_data)
         return final_data
 
@@ -357,6 +346,7 @@ class ArchivalEngine:
         base_project_dir = os.path.join(self.archive_root, workbook_name, academic_year, batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}")
         os.makedirs(base_project_dir, exist_ok=True)
 
+        # Tier 0 Global Lock
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id, academic_year=academic_year
         ).order_by(ArchivalLedger.version.desc()).first()
@@ -366,8 +356,6 @@ class ArchivalEngine:
         total_changed = 0   
         backfilled = 0      
         error_msg = ""
-        
-        # Parallel stats lock
         _lock = threading.Lock()
 
         def _worker(doc_type):
@@ -375,7 +363,7 @@ class ArchivalEngine:
             link = project_data.get(f'{doc_type}_link')
             results[doc_type]['url'] = link
             
-            # Inheritance
+            # Gap-Filling
             if not link and last_record:
                 old_path = getattr(last_record, f"{doc_type}_local_path", None)
                 if old_path:
@@ -406,14 +394,14 @@ class ArchivalEngine:
                     # Tier 0: Fast Skip
                     try:
                         drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
-                        vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
+                        vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc) if last_record.archived_at.tzinfo is None else last_record.archived_at
                         if (drive_dt - vault_dt).total_seconds() <= 5: is_modified = False
                     except: pass
 
                 if not is_modified:
-                    results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                    results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
-                    results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
+                    results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
+                    results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash", None)
+                    results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None)
                     return
 
                 doc_dir = os.path.join(base_project_dir, doc_type.upper())
@@ -422,11 +410,11 @@ class ArchivalEngine:
 
                 try:
                     final_bytes = self.download_file(file_id, temp_path, original_url=link)
-                    new_hash = self._tls.last_source_hash if hasattr(self._tls, 'last_source_hash') and self._tls.last_source_hash else hashlib.sha256(final_bytes).hexdigest()
+                    new_hash = getattr(self._tls, 'last_source_hash', None) or hashlib.sha256(final_bytes).hexdigest()
                     new_text = self._extract_text_from_pdf(temp_path) or ""
 
                     if last_record:
-                        # TIER 1: BIT MATCH
+                        # TIER 1: BIT MATCH (Raw Byte Pipeline)
                         old_hash = getattr(last_record, f"{doc_type}_hash", None)
                         if old_hash and new_hash == old_hash:
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
@@ -435,7 +423,7 @@ class ArchivalEngine:
                             if os.path.exists(temp_path): os.remove(temp_path)
                             return
 
-                        # TIER 2 & 3: SENSITIVE DNA MATCH
+                        # TIER 2 & 3: DNA & AI DEDUPLICATION
                         old_text = getattr(last_record, f"{doc_type}_text", None) or ""
                         if not old_text:
                             old_path_disk = getattr(last_record, f"{doc_type}_local_path", None)
@@ -454,14 +442,15 @@ class ArchivalEngine:
                                 vect = TfidfVectorizer(min_df=1)
                                 tfidf = vect.fit_transform([old_text, new_text])
                                 sim = float((tfidf * tfidf.T).toarray()[0, 1])
-                                # HYPER-SENSITIVE: Only skip if > 99.9% similar
-                                if sim > 0.999: is_dup = True
+                                if sim > 0.98: is_dup = True
                             except: pass
                             
                         if is_dup:
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
-                            results[doc_type]['hash'] = old_hash
+                            results[doc_type]['hash'] = new_hash # Soft-migrate hash
                             results[doc_type]['text'] = old_text or new_text
+                            with _lock: backfilled += 1
+                            results[doc_type]['is_backfill'] = True
                             if os.path.exists(temp_path): os.remove(temp_path)
                             return
 
@@ -470,15 +459,18 @@ class ArchivalEngine:
                     results[doc_type]['hash'] = new_hash
                     results[doc_type]['text'] = new_text
                     
-                    prev_hash_for_doc = getattr(last_record, f"{doc_type}_hash") if last_record else None
-                    is_backfill = bool(last_record) and not prev_hash_for_doc
+                    prev_hash_for_doc = getattr(last_record, f"{doc_type}_hash", None)
+                    is_bf = bool(last_record) and not prev_hash_for_doc
                     
                     with _lock:
-                        if is_backfill: backfilled += 1
+                        if is_bf: backfilled += 1
                         else: total_changed += 1
                     
-                    file_version = last_record.version if is_backfill else (last_record.version if last_record else 0) + 1
-                    final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{file_version}.pdf")
+                    results[doc_type]['is_changed'] = not is_bf
+                    results[doc_type]['is_backfill'] = is_bf
+                    
+                    v = last_record.version if is_bf else (last_record.version if last_record else 0) + 1
+                    final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{v}.pdf")
                     os.rename(temp_path, final_path)
                     results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
                 except Exception as e:
@@ -490,18 +482,23 @@ class ArchivalEngine:
             except Exception as e:
                 with _lock: error_msg += f"{doc_type.upper()}: {str(e)[:50]}; "
 
-        # SPEED: Process all docs for this project in parallel (max 4 workers)
+        # PARALLEL FETCHING
         with ThreadPoolExecutor(max_workers=4) as pool:
             pool.map(_worker, doc_types)
 
         if total_changed == 0:
             if last_record and backfilled > 0:
                 try:
+                    MAX_BIN_SIZE_BF = 15 * 1024 * 1024
                     for dt in doc_types:
-                        if not results[dt].get('path') or results[dt]['path'] == getattr(last_record, f"{dt}_local_path"): continue
+                        if not results[dt].get('is_backfill'): continue
                         setattr(last_record, f"{dt}_local_path", results[dt]['path'])
                         setattr(last_record, f"{dt}_hash", results[dt]['hash'])
+                        setattr(last_record, f"{dt}_original_url", results[dt]['url'])
                         if hasattr(last_record, f"{dt}_text"): setattr(last_record, f"{dt}_text", results[dt]['text'])
+                        if hasattr(last_record, f"{dt}_binary"):
+                            b = results[dt].get('bin')
+                            setattr(last_record, f"{dt}_binary", b if b and len(b) <= MAX_BIN_SIZE_BF else None)
                     db.session.commit()
                     return {'status': 'unchanged', 'version': last_record.version}
                 except: db.session.rollback()
