@@ -317,20 +317,28 @@ class ArchivalEngine:
                         if is_google_doc:
                             new_text = self._extract_text_from_pdf(temp_path)
                             old_text = getattr(last_record, f"{doc_type}_text")
-                            if AI_AVAILABLE and new_text and old_text:
+                            
+                            def get_clean_text(t):
+                                return re.sub(r'\W+', '', t).lower() if t else ""
+                                
+                            new_clean = get_clean_text(new_text)
+                            old_clean = get_clean_text(old_text)
+                            
+                            is_match = False
+                            if new_clean == old_clean:
+                                is_match = True
+                                logger.info(f"   [TIER 3 SKIP] Alphanumeric DNA match for {doc_type.upper()}.")
+                            elif AI_AVAILABLE and new_clean and old_clean:
                                 try:
                                     vect = TfidfVectorizer(min_df=1)
                                     tfidf = vect.fit_transform([old_text, new_text])
                                     sim = (tfidf * tfidf.T).toarray()[0,1]
-                                    if sim > 0.99: # 99% Similarity = Duplicate
+                                    if sim > 0.99:
+                                        is_match = True
                                         logger.info(f"   [TIER 3 SKIP] AI Similarity {sim:.2%}. Skipping v2.")
-                                        results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                                        results[doc_type]['hash'] = old_hash
-                                        results[doc_type]['text'] = old_text
-                                        if os.path.exists(temp_path): os.remove(temp_path)
-                                        continue
                                 except: pass
-                            elif new_text and old_text and new_text.strip() == old_text.strip():
+                                
+                            if is_match:
                                 results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                                 results[doc_type]['hash'] = old_hash
                                 results[doc_type]['text'] = old_text
@@ -338,7 +346,7 @@ class ArchivalEngine:
                                 continue
 
                     # IF WE ARE HERE, CONTENT IS TRULY NEW
-                    new_text = self._extract_text_from_pdf(temp_path) if is_google_doc else ""
+                    new_text = new_text if 'new_text' in locals() else (self._extract_text_from_pdf(temp_path) if is_google_doc else "")
                     results[doc_type]['bin'] = final_bytes
                     results[doc_type]['hash'] = new_hash
                     results[doc_type]['text'] = new_text
