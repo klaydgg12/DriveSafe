@@ -76,7 +76,21 @@ class RegistrySheetsService:
             # 1. Map known keywords with high priority
             for key, synonyms in keywords.items():
                 for i, header in enumerate(headers):
-                    if any(syn == header or (len(syn) > 3 and syn in header) for syn in synonyms):
+                    # Check for exact match or whole-word match in longer strings
+                    found = False
+                    for syn in synonyms:
+                        # Exact match
+                        if syn == header:
+                            found = True
+                            break
+                        # Whole word match (e.g., "SRS" matches "1. SRS (Link Here)")
+                        # We use \b for boundary, but handle cases where header has newlines
+                        pattern = rf'\b{re.escape(syn)}\b'
+                        if re.search(pattern, header, re.IGNORECASE):
+                            found = True
+                            break
+                    
+                    if found:
                         mapping[key] = i
                         break
             
@@ -85,9 +99,14 @@ class RegistrySheetsService:
             mapped_indices = set(mapping.values())
             for i, header in enumerate(headers):
                 if i not in mapped_indices and header:
+                    # Filter out non-deliverable columns like "Timestamp"
+                    if any(stop in header.lower() for stop in ['timestamp', 'id number', 'student name', 'date']):
+                        continue
+                        
                     # Clean the header to use as a key
-                    clean_key = re.sub(r'[^a-z0-9]', '_', header).strip('_')
-                    if clean_key and not clean_key.endswith('_link'):
+                    clean_key = re.sub(r'[^a-z0-9]', '_', header.lower()).strip('_')
+                    # Don't add if it's too generic or already exists
+                    if clean_key and f"{clean_key}_link" not in mapping:
                         mapping[f"{clean_key}_link"] = i
             
             self._header_cache[cache_key] = mapping
