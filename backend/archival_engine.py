@@ -76,17 +76,28 @@ class ArchivalEngine:
         return None, False
 
     def _get_file_metadata(self, file_id):
+        FIELDS = 'id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails, size'
+        def _fetch(svc, fid):
+            return svc.files().get(fileId=fid, fields=FIELDS, supportsAllDrives=True).execute()
+        meta = None
         try:
-            return self.service.files().get(
-                fileId=file_id, 
-                fields='id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails, size',
-                supportsAllDrives=True
-            ).execute()
+            meta = _fetch(self.service, file_id)
         except:
             if self.sa_service:
-                try: return self.sa_service.files().get(fileId=file_id, fields='id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails, size', supportsAllDrives=True).execute()
-                except: return None
-            return None
+                try: meta = _fetch(self.sa_service, file_id)
+                except: meta = None
+        # SHORTCUT RESOLUTION: follow targetId to real file (fixes 403 on shortcut/Shared-Drive entries)
+        if meta and meta.get('mimeType') == 'application/vnd.google-apps.shortcut':
+            target_id = (meta.get('shortcutDetails') or {}).get('targetId')
+            if target_id and target_id != meta.get('id'):
+                try:
+                    resolved = _fetch(self.service, target_id)
+                    if resolved: return resolved
+                except:
+                    if self.sa_service:
+                        try: return _fetch(self.sa_service, target_id)
+                        except: pass
+        return meta
 
     def _resolve_folder(self, folder_id, target_hint=None):
         try:
@@ -161,13 +172,22 @@ class ArchivalEngine:
         logger.info(f"[{self.identity_label}] ARCHIVING: {file_name}")
         final_data = None
         
-        # 1. Mirror
+        # 1. Mirror (high-fidelity Chrome 121)
         try:
             url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=False)
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                 'Accept': 'application/pdf,application/octet-stream,*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
                 'Referer': 'https://docs.google.com/',
+                'sec-ch-ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'same-origin',
+                'Upgrade-Insecure-Requests': '1',
             }
             if self.creds:
                 if hasattr(self.creds, 'valid') and not self.creds.valid: self.creds.refresh(requests.Session())
@@ -245,14 +265,18 @@ class ArchivalEngine:
         base_project_dir = os.path.join(self.archive_root, workbook_name, academic_year, batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}")
         os.makedirs(base_project_dir, exist_ok=True)
         
-        # TIER 0: GLOBAL CROSS-SHEET LOCK
+        # TIER 0: GLOBAL CROSS-SHEET LOCK (project_id + academic_year is the canonical identity)
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id, academic_year=academic_year
         ).order_by(ArchivalLedger.version.desc()).first()
         
+        if not last_record:
+            logger.info(f"   [FAST-PATH] No prior record for {project_id}@{academic_year}; skipping all dedup tiers (v1 cold archive).")
+        
         doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'presentation', 'source_code', 'database', 'readme']
-        results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': b'', 'ts': None, 'text': '', 'url': None} for dt in doc_types}
-        total_changed = 0
+        results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'is_backfill': False, 'bin': b'', 'ts': None, 'text': '', 'url': None} for dt in doc_types}
+        total_changed = 0   # real edits to existing docs => bump version
+        backfilled = 0      # NULL slots in last_record that we now have content for => in-place update, no v-bump
         error_msg = ""
 
         for doc_type in doc_types:
@@ -286,8 +310,10 @@ class ArchivalEngine:
                 is_google_doc = 'google-apps' in mime_type
                 
                 is_modified = True
-                if last_record:
-                    # Tier-0 fast skip logic: Only rely on Timestamp with buffer (MD5/SHA collision removed)
+                # Fast-skip is ONLY safe when last_record actually has prior content for THIS doc.
+                # Otherwise a NULL slot would be "frozen" forever (Sheet-Switch backfill bug).
+                prev_hash_for_doc = getattr(last_record, f"{doc_type}_hash") if last_record else None
+                if last_record and prev_hash_for_doc:
                     try:
                         drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
                         vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
@@ -343,15 +369,22 @@ class ArchivalEngine:
                             if os.path.exists(temp_path): os.remove(temp_path)
                             continue
 
-                    # CONTENT IS NEW
+                    # CONTENT IS NEW: classify as BACKFILL (slot was NULL) or REAL EDIT (slot existed, now differs)
                     new_text = self._extract_text_from_pdf(temp_path) if is_google_doc else ""
                     results[doc_type]['bin'] = final_bytes
                     results[doc_type]['hash'] = new_hash
                     results[doc_type]['text'] = new_text
-                    total_changed += 1
-                    results[doc_type]['is_changed'] = True
-                    current_rev = last_record.version if last_record else 0
-                    final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{current_rev+1}.pdf")
+                    is_backfill = bool(last_record) and not prev_hash_for_doc
+                    if is_backfill:
+                        backfilled += 1
+                        results[doc_type]['is_backfill'] = True
+                        file_version = last_record.version  # belongs to existing version (no bump)
+                        logger.info(f"   [BACKFILL] {doc_type.upper()} was missing in v{file_version}; filling without bump.")
+                    else:
+                        total_changed += 1
+                        results[doc_type]['is_changed'] = True
+                        file_version = (last_record.version if last_record else 0) + 1
+                    final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{file_version}.pdf")
                     os.rename(temp_path, final_path)
                     results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
                 except Exception as e:
@@ -363,7 +396,28 @@ class ArchivalEngine:
             except Exception as e:
                 error_msg += f"{doc_type.upper()}: {str(e)[:50]}; "
 
+        # NO real edits => either fully unchanged, or we backfill the existing record in-place (NO v-bump)
         if total_changed == 0:
+            if last_record and backfilled > 0:
+                try:
+                    MAX_BIN_SIZE_BF = 15 * 1024 * 1024
+                    for dt in doc_types:
+                        if not results[dt]['is_backfill']: continue
+                        setattr(last_record, f"{dt}_local_path", results[dt]['path'])
+                        setattr(last_record, f"{dt}_hash", results[dt]['hash'])
+                        setattr(last_record, f"{dt}_original_url", results[dt]['url'])
+                        if hasattr(last_record, f"{dt}_text"):
+                            setattr(last_record, f"{dt}_text", results[dt]['text'])
+                        if hasattr(last_record, f"{dt}_binary"):
+                            b = results[dt]['bin']
+                            setattr(last_record, f"{dt}_binary", b if b and len(b) <= MAX_BIN_SIZE_BF else None)
+                    db.session.commit()
+                    logger.info(f"   [BACKFILL-COMMIT] Filled {backfilled} gap(s) into v{last_record.version}; no version bump.")
+                    return {'status': 'unchanged', 'version': last_record.version, 'backfilled': backfilled}
+                except Exception as e:
+                    db.session.rollback()
+                    logger.error(f"Backfill update failed: {e}")
+                    return {'status': 'unchanged', 'version': last_record.version, 'error': f"backfill failed: {str(e)[:80]}"}
             if last_record: return {'status': 'unchanged', 'version': last_record.version}
             else: return {'status': 'failed', 'error': error_msg.strip()}
 
