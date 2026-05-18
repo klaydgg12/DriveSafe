@@ -108,7 +108,7 @@ class ArchivalEngine:
         'SPMP':           ['spmp', 'project management plan', 'management plan'],
         'STD':            ['std', 'test description', 'software test'],
         'RI':             ['ri', 'research instrument'],
-        'RESEARCH_PAPER': ['research paper', 'research_paper', 'manuscript'],
+        'RESEARCH_PAPER': ['research paper', 'research_paper', 'manuscript', 'acm'],
         'USABILITY_TEST': ['usability', 'ucd', 'user testing'],
         'PRESENTATION':   ['presentation', 'slides', 'ppt', 'defense', 'pitch'],
         'README':         ['readme', 'read me', 'read_me'],

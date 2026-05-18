@@ -23,11 +23,17 @@ interface Project {
     row_index: number;
     project_id: string;
     project_title: string;
+    // Known link fields (kept for type-safety on existing usages). Anything
+    // ending in _link (research_paper_link, usability_test_link, presentation_link,
+    // or any future column) is also accepted dynamically via the index signature.
     srs_link: string;
     sdd_link: string;
     spmp_link: string;
     std_link: string;
     ri_link: string;
+    research_paper_link?: string;
+    usability_test_link?: string;
+    presentation_link?: string;
     source_code_link: string;
     github_link: string;
     database_link: string;
@@ -36,6 +42,7 @@ interface Project {
     academic_year: string;
     latest_version?: number;
     error_message?: string;
+    [key: string]: any;
 }
 
 interface Workbook { id: string; name: string; }
@@ -168,10 +175,13 @@ const RegistryDashboard: React.FC = () => {
     };
 
     const validateLinks = async () => {
-        const linksToValidate = projects.flatMap(p => [
-            p.srs_link, p.sdd_link, p.spmp_link, p.std_link, p.ri_link,
-            p.source_code_link, p.github_link, p.database_link, p.readme_link
-        ]).filter(l => l);
+        // Dynamically pull every *_link field on each project so RP / UT / Presentation
+        // (and any future column added to the sheet) get validated automatically.
+        const linksToValidate = projects.flatMap(p =>
+            Object.keys(p)
+                .filter(k => k.endsWith('_link'))
+                .map(k => p[k] as string)
+        ).filter(l => l);
         if (linksToValidate.length === 0) return;
         setLoading(true);
         try {

@@ -63,7 +63,7 @@ class RegistrySheetsService:
                 'spmp_link': ['finalized software project management plan', 'software project management plan', 'spmp'],
                 'std_link': ['finalized software test document', 'software test document', 'std'],
                 'ri_link': ['requirements inventory', 'ri file', 'ri_file', 'ri'],
-                'research_paper_link': ['research paper (acm format)', 'research paper', 'acm format', 'rp'],
+                'research_paper_link': ['research paper (acm format)', 'research paper', 'acm format', 'rp', 'acm'],
                 'usability_test_link': ['usability test results', 'usability test', 'usability', 'ut'],
                 'presentation_link': ['final presentation ppt', 'final presentation', 'presentation ppt', 'presentation_ppt', 'presentation', 'ppt'],
                 'source_code_link': ['zipped source code', 'source code', 'zipped_source', 'src'],
@@ -76,36 +76,26 @@ class RegistrySheetsService:
             # 1. Map known keywords with high priority
             for key, synonyms in keywords.items():
                 for i, header in enumerate(headers):
-                    # Check for exact match or whole-word match in longer strings
                     found = False
                     for syn in synonyms:
-                        # Exact match
                         if syn == header:
                             found = True
                             break
-                        # Whole word match (e.g., "SRS" matches "1. SRS (Link Here)")
-                        # We use \b for boundary, but handle cases where header has newlines
                         pattern = rf'\b{re.escape(syn)}\b'
                         if re.search(pattern, header, re.IGNORECASE):
                             found = True
                             break
-                    
                     if found:
                         mapping[key] = i
                         break
             
-            # 2. Dynamic Mapping: Any unmapped column that isn't a known field 
-            # is treated as a potential deliverable link
+            # 2. Dynamic Mapping for potential deliverable links
             mapped_indices = set(mapping.values())
             for i, header in enumerate(headers):
                 if i not in mapped_indices and header:
-                    # Filter out non-deliverable columns like "Timestamp"
                     if any(stop in header.lower() for stop in ['timestamp', 'id number', 'student name', 'date']):
                         continue
-                        
-                    # Clean the header to use as a key
                     clean_key = re.sub(r'[^a-z0-9]', '_', header.lower()).strip('_')
-                    # Don't add if it's too generic or already exists
                     if clean_key and f"{clean_key}_link" not in mapping:
                         mapping[f"{clean_key}_link"] = i
             
@@ -126,9 +116,6 @@ class RegistrySheetsService:
             col_map = self._get_header_map(worksheet)
             team_groups = {}
             
-            # Standard doc types for file ID processing
-            standard_docs = ['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'github', 'database', 'readme', 'research_paper', 'usability_test', 'presentation']
-
             for idx, row in enumerate(all_records[1:], start=2):
                 def get_val(key, default=''):
                     if key in col_map and col_map[key] < len(row):
@@ -148,7 +135,7 @@ class RegistrySheetsService:
                     match = re.search(r'/d/([a-zA-Z0-9_-]{25,})', url)
                     return match.group(1) if match else url
 
-                # Process file IDs for standard and dynamic docs
+                all_link_keys = [k for k in col_map.keys() if k.endswith('_link')]
                 current_file_ids = {}
                 project_data = {
                     'row_index': idx,
@@ -160,36 +147,32 @@ class RegistrySheetsService:
                     'conflicting_fields': [],
                 }
 
-                # Populate all mapped columns
-                for key, col_idx in col_map.items():
-                    if col_idx < len(row):
-                        val = get_val(key)
-                        project_data[key] = val
-                        
-                        # If it's a link column, extract file ID for conflict detection
-                        if key.endswith('_link'):
-                            doc_id = key.replace('_link', '')
-                            current_file_ids[doc_id] = clean_link(val) if 'github' not in doc_id else val.lower().strip().rstrip('/')
+                for lk in all_link_keys:
+                    val = get_val(lk)
+                    project_data[lk] = val
+                    dt = lk[:-5]
+                    if dt == 'github':
+                        current_file_ids[dt] = val.lower().strip().rstrip('/')
+                    else:
+                        current_file_ids[dt] = clean_link(val)
 
                 project_data['_file_ids'] = current_file_ids
 
                 if not team_code and not any(current_file_ids.values()): continue
-
                 merge_key = str(team_code).strip().lower() if team_code else f"ROW_{idx}"
 
                 if merge_key in team_groups:
                     existing = team_groups[merge_key]
                     conflicts = set(existing.get('conflicting_fields', []))
-                    
-                    # Merge error messages
                     combined_error = existing.get('error_message', '')
                     new_error = project_data.get('error_message', '')
                     if new_error and new_error not in combined_error:
                         project_data['error_message'] = f"{combined_error} | {new_error}".strip(' | ')
 
-                    # Detect conflicts in file IDs
-                    for dt, fid in current_file_ids.items():
-                        if fid and existing['_file_ids'].get(dt) and fid != existing['_file_ids'][dt]:
+                    for dt in set(current_file_ids.keys()) | set(existing.get('_file_ids', {}).keys()):
+                        cur = current_file_ids.get(dt)
+                        prev = existing.get('_file_ids', {}).get(dt)
+                        if cur and prev and cur != prev:
                             conflicts.add(dt)
                     project_data['conflicting_fields'] = list(conflicts)
                     team_groups[merge_key] = project_data
