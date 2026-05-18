@@ -99,34 +99,102 @@ class ArchivalEngine:
                         except: pass
         return meta
 
-    def _resolve_folder(self, folder_id, target_hint=None):
+    # Keyword sets for matching deliverable filenames inside Drive folders
+    HINT_KEYWORDS = {
+        'SRS':            ['srs', 'requirements specification', 'software requirements'],
+        'SDD':            ['sdd', 'design description', 'software design'],
+        'SPMP':           ['spmp', 'project management plan', 'management plan'],
+        'STD':            ['std', 'test description', 'software test'],
+        'RI':             ['ri', 'research instrument'],
+        'RESEARCH_PAPER': ['research paper', 'research_paper', 'manuscript'],
+        'USABILITY_TEST': ['usability', 'ucd', 'user testing'],
+        'PRESENTATION':   ['presentation', 'slides', 'ppt', 'defense', 'pitch'],
+        'README':         ['readme', 'read me', 'read_me'],
+        'SOURCE_CODE':    ['source', 'code', 'src'],
+        'DATABASE':       ['database', 'schema', 'db dump', 'sql'],
+    }
+
+    def _list_children(self, folder_id, service=None):
+        svc = service or self.service
         try:
-            query = f"'{folder_id}' in parents and trashed = false"
-            results = self.service.files().list(
-                q=query, fields="files(id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails)", 
-                orderBy="modifiedTime desc", supportsAllDrives=True, includeItemsFromAllDrives=True
+            res = svc.files().list(
+                q=f"'{folder_id}' in parents and trashed = false",
+                fields="files(id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails)",
+                orderBy="modifiedTime desc", supportsAllDrives=True, includeItemsFromAllDrives=True,
+                pageSize=200
             ).execute()
-            files = results.get('files', [])
+            return res.get('files', []) or []
+        except Exception as e:
+            logger.warning(f"   [LIST] failed for folder {folder_id}: {str(e)[:120]}")
+            return []
+
+    def _score_candidate(self, file_meta, keywords):
+        """Higher = better match. PDFs/docs preferred; keyword hits bonus."""
+        name = (file_meta.get('name') or '').lower()
+        mime = (file_meta.get('mimeType') or '').lower()
+        if mime == 'application/vnd.google-apps.folder': return -1   # folders are not deliverables
+        score = 0
+        for kw in keywords:
+            if kw and kw in name: score += 10
+        if 'pdf' in mime: score += 5
+        elif 'wordprocessingml' in mime or 'msword' in mime: score += 4
+        elif 'google-apps.document' in mime: score += 4
+        elif 'presentation' in mime or 'powerpoint' in mime: score += 3
+        elif 'spreadsheet' in mime or 'excel' in mime: score += 2
+        elif mime == 'application/vnd.google-apps.shortcut': score += 1
+        # demote obvious noise
+        if any(x in name for x in ['old', 'backup', 'archive', 'draft (old)', 'deprecated']): score -= 3
+        return score
+
+    def _resolve_folder(self, folder_id, target_hint=None, _depth=0):
+        """Pick the best deliverable inside `folder_id`. Recurses ONE level into subfolders
+        when the top level only contains folders (e.g. STD/Final/STD_v3.pdf)."""
+        try:
+            files = self._list_children(folder_id)
+            if not files and self.sa_service:
+                files = self._list_children(folder_id, service=self.sa_service)
             if not files: return None, None
-            
-            selected = None
+
+            keywords = []
             if target_hint:
-                hint = target_hint.lower().replace('finalized', '').replace('software', '').strip()
-                for f in files:
-                    if hint in f['name'].lower(): 
-                        selected = f
-                        break
-            if not selected:
-                for f in files:
-                    if 'pdf' in f['mimeType'].lower() or 'document' in f['mimeType'].lower():
-                        selected = f
-                        break
-            if not selected: selected = files[0]
-            fid = selected['id']
-            if selected.get('mimeType') == 'application/vnd.google-apps.shortcut':
-                fid = selected.get('shortcutDetails', {}).get('targetId') or fid
-            return fid, selected
-        except: return None, None
+                keywords = self.HINT_KEYWORDS.get(target_hint.upper(), [target_hint.lower()])
+
+            # 1) Score all non-folder children
+            best = None
+            best_score = -999
+            for f in files:
+                s = self._score_candidate(f, keywords)
+                if s > best_score:
+                    best_score = s
+                    best = f
+
+            # 2) If the only viable picks are folders (or score is poor), recurse one level
+            if (best is None or best_score <= 0) and _depth < 1:
+                subfolders = [f for f in files if f.get('mimeType') == 'application/vnd.google-apps.folder']
+                # Prefer subfolders whose name hints at the deliverable / "final"
+                def sub_priority(sf):
+                    n = (sf.get('name') or '').lower()
+                    p = 0
+                    for kw in keywords:
+                        if kw and kw in n: p += 5
+                    if any(x in n for x in ['final', 'finalized', 'submission', 'submit']): p += 3
+                    return p
+                subfolders.sort(key=sub_priority, reverse=True)
+                for sf in subfolders[:5]:
+                    fid_sub, meta_sub = self._resolve_folder(sf['id'], target_hint=target_hint, _depth=_depth+1)
+                    if fid_sub:
+                        logger.info(f"   [FOLDER-RECURSE] {target_hint}: descended into '{sf.get('name')}' -> '{(meta_sub or {}).get('name')}'")
+                        return fid_sub, meta_sub
+
+            if not best: return None, None
+            fid = best['id']
+            if best.get('mimeType') == 'application/vnd.google-apps.shortcut':
+                fid = (best.get('shortcutDetails') or {}).get('targetId') or fid
+            logger.info(f"   [FOLDER-PICK] {target_hint}: '{best.get('name')}' (mime={best.get('mimeType')}, score={best_score})")
+            return fid, best
+        except Exception as e:
+            logger.warning(f"   [FOLDER] resolve failed: {str(e)[:120]}")
+            return None, None
 
     def _extract_text_from_pdf(self, file_path):
         try:
@@ -137,11 +205,19 @@ class ArchivalEngine:
         except: return ""
 
     def validate_binary(self, data, is_pdf=True):
-        if not data or len(data) < 500: return False
-        content_sample = data[:2000].lower()
-        if b'<html' in content_sample:
-            if any(x in content_sample for x in [b'google login', b'sign in', b'access denied']): return False
-        if is_pdf and not data.startswith(b'%PDF-'): return False
+        """Reject HTML pages always; enforce %PDF- + reasonable size only when caller demands a PDF.
+        For non-PDF targets, allow tiny files (e.g. short README.md) as long as they aren't HTML."""
+        if not data: return False
+        head = data[:2048].lstrip().lower()
+        # Catch any HTML response (login pages, error pages, confirmation pages, generic 4xx/5xx HTML)
+        if head.startswith(b'<!doctype html') or head.startswith(b'<html') or b'<html' in head[:512]:
+            return False
+        if is_pdf:
+            if len(data) < 500: return False
+            if not data.startswith(b'%PDF-'): return False
+        else:
+            # Non-strict path: still reject obviously empty / single-byte responses.
+            if len(data) < 4: return False
         return True
 
     def _construct_url(self, file_id, original_url=None, is_google_doc=True, clean=False, inject_token=None):
@@ -168,8 +244,11 @@ class ArchivalEngine:
         file_name = meta.get('name', 'unknown') if meta else 'Document'
         is_google = 'google-apps' in mime_type or (original_url and 'docs.google.com' in str(original_url))
         is_pdf_target = destination_path.lower().endswith('.pdf')
+        # Strict %PDF- check is only meaningful when Google MUST emit a PDF (native-doc export).
+        # For raw uploads (.docx/.pdf/.pptx/etc.) we accept any non-HTML binary and convert later.
+        strict_pdf_check = is_pdf_target and is_google
         
-        logger.info(f"[{self.identity_label}] ARCHIVING: {file_name}")
+        logger.info(f"[{self.identity_label}] ARCHIVING: {file_name} (mime={mime_type or 'n/a'}, native={is_google})")
         final_data = None
         
         # 1. Mirror (high-fidelity Chrome 121)
@@ -193,7 +272,7 @@ class ArchivalEngine:
                 if hasattr(self.creds, 'valid') and not self.creds.valid: self.creds.refresh(requests.Session())
                 headers['Authorization'] = f'Bearer {self.creds.token}'
             resp = self.session.get(url, headers=headers, timeout=60, allow_redirects=True)
-            if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=is_pdf_target):
+            if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=strict_pdf_check):
                 final_data = resp.content
         except: pass
 
@@ -202,7 +281,7 @@ class ArchivalEngine:
             try:
                 url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=True, inject_token=self.creds.token)
                 resp = self.session.get(url, timeout=60, allow_redirects=True)
-                if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=is_pdf_target):
+                if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=strict_pdf_check):
                     final_data = resp.content
             except: pass
 
@@ -215,8 +294,9 @@ class ArchivalEngine:
                 downloader = MediaIoBaseDownload(fh, request)
                 done = False
                 while not done: _, done = downloader.next_chunk()
-                if self.validate_binary(fh.getvalue(), is_pdf=is_pdf_target): final_data = fh.getvalue()
-            except: pass
+                if self.validate_binary(fh.getvalue(), is_pdf=strict_pdf_check): final_data = fh.getvalue()
+            except Exception as e:
+                logger.warning(f"   [API] export/get_media failed for {file_name}: {str(e)[:120]}")
 
         # 4. Service Account Override
         if not final_data and self.sa_service:
@@ -227,10 +307,11 @@ class ArchivalEngine:
                 downloader = MediaIoBaseDownload(fh, request)
                 done = False
                 while not done: _, done = downloader.next_chunk()
-                if self.validate_binary(fh.getvalue(), is_pdf=is_pdf_target): final_data = fh.getvalue()
-            except: pass
+                if self.validate_binary(fh.getvalue(), is_pdf=strict_pdf_check): final_data = fh.getvalue()
+            except Exception as e:
+                logger.warning(f"   [SA] fallback failed for {file_name}: {str(e)[:120]}")
 
-        if not final_data: raise Exception("Access Denied (Locked by Institution)")
+        if not final_data: raise Exception(f"Access Denied for {file_name} (mime={mime_type or 'unknown'})")
 
         # Word to PDF conversion
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
