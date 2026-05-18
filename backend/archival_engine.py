@@ -55,7 +55,7 @@ class ArchivalEngine:
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v21 Initialized (Triple-Tier Deduplication)")
+        logger.info(f"ArchivalEngine Master v22 Initialized (Content-Strict Protocol)")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -199,7 +199,7 @@ class ArchivalEngine:
 
         if not final_data: raise Exception("Access Denied (Google Lock)")
 
-        # Conversion
+        # Word to PDF conversion
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
             if final_data.startswith(b'PK\x03\x04') or str(file_name).lower().endswith(('.docx', '.doc')):
                 temp_meta = {'name': f"CONV_{int(time.time())}", 'mimeType': 'application/vnd.google-apps.document'}
@@ -227,12 +227,12 @@ class ArchivalEngine:
         project_id = str(project_data.get('project_id', 'Unknown')).strip().lower()
         project_title = project_data.get('project_title', 'Untitled')
         clean_title = str(project_title).replace(' ', '_').replace('/', '_').replace('\\', '_')
-        academic_year = project_data.get('academic_year')
+        academic_year = project_data.get('academic_year', 'General').strip()
         
         base_project_dir = os.path.join(self.archive_root, workbook_name, academic_year, batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}")
         os.makedirs(base_project_dir, exist_ok=True)
         
-        # Absolute latest record globally for this project
+        # --- GLOBAL HISTORY (Ignore workbook here to find existing records for deduplication) ---
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id, academic_year=academic_year
         ).order_by(ArchivalLedger.version.desc()).first()
@@ -241,16 +241,16 @@ class ArchivalEngine:
         results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'bin': b'', 'ts': None, 'text': '', 'url': None} for dt in doc_types}
         total_changed = 0
         error_msg = ""
-        recovered_from_vault = 0
 
         for doc_type in doc_types:
             link = project_data.get(f'{doc_type}_link')
             results[doc_type]['url'] = link
             
-            # --- TIER 0: GAP-FILLING PERSISTENCE ---
+            # --- TIER 0: GAP-FILLING PERSISTENCE (Crucial for sheet switching) ---
             if not link and last_record:
                 old_path = getattr(last_record, f"{doc_type}_local_path")
                 if old_path:
+                    logger.info(f"   [INHERITING] {doc_type.upper()} inherited from global project history.")
                     results[doc_type]['path'] = old_path
                     results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                     results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
@@ -258,6 +258,7 @@ class ArchivalEngine:
                     continue
             
             if not link: continue
+            
             raw_id, is_folder = self._extract_file_id(link)
             if not raw_id: continue
             
@@ -268,7 +269,7 @@ class ArchivalEngine:
             if not file_id: continue
 
             try:
-                # --- TIER 1: METADATA FINGERPRINT (Fast Skip) ---
+                # --- TIER 1: METADATA FINGERPRINT (MD5 & Time) ---
                 drive_md5 = metadata.get('md5Checksum') if metadata else None
                 results[doc_type]['ts'] = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
                 is_google_doc = doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'readme']
@@ -276,11 +277,9 @@ class ArchivalEngine:
                 is_modified = True
                 if last_record:
                     vault_hash = getattr(last_record, f"{doc_type}_hash")
-                    # MD5 Match (Non-docs)
                     if drive_md5 and vault_hash and drive_md5 == vault_hash:
                         is_modified = False
                     else:
-                        # Timestamp Match (Docs - 5s jitter)
                         try:
                             drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
                             vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
@@ -306,14 +305,14 @@ class ArchivalEngine:
                         # --- TIER 2: BIT MATCH (Strict SHA-256) ---
                         old_hash = getattr(last_record, f"{doc_type}_hash")
                         if new_hash == old_hash:
-                            logger.info(f"   [TIER 2 SKIP] Hash match for {doc_type.upper()}.")
+                            logger.info(f"   [TIER 2 SKIP] Bit match for {doc_type.upper()}.")
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                             results[doc_type]['hash'] = old_hash
                             results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
                             if os.path.exists(temp_path): os.remove(temp_path)
                             continue
 
-                        # --- TIER 3: CONTENT DNA (AI Similarity) ---
+                        # --- TIER 3: CONTENT DNA (Alphanumeric Match) ---
                         if is_google_doc:
                             new_text = self._extract_text_from_pdf(temp_path)
                             old_text = getattr(last_record, f"{doc_type}_text")
@@ -327,15 +326,15 @@ class ArchivalEngine:
                             is_match = False
                             if new_clean == old_clean:
                                 is_match = True
-                                logger.info(f"   [TIER 3 SKIP] Alphanumeric DNA match for {doc_type.upper()}.")
+                                logger.info(f"   [TIER 3 SKIP] Alphanumeric match for {doc_type.upper()}.")
                             elif AI_AVAILABLE and new_clean and old_clean:
                                 try:
                                     vect = TfidfVectorizer(min_df=1)
                                     tfidf = vect.fit_transform([old_text, new_text])
                                     sim = (tfidf * tfidf.T).toarray()[0,1]
-                                    if sim > 0.99:
+                                    if sim > 0.995:
                                         is_match = True
-                                        logger.info(f"   [TIER 3 SKIP] AI Similarity {sim:.2%}. Skipping v2.")
+                                        logger.info(f"   [TIER 3 SKIP] AI Similarity {sim:.2%}.")
                                 except: pass
                                 
                             if is_match:
@@ -345,7 +344,7 @@ class ArchivalEngine:
                                 if os.path.exists(temp_path): os.remove(temp_path)
                                 continue
 
-                    # IF WE ARE HERE, CONTENT IS TRULY NEW
+                    # CONTENT IS NEW
                     new_text = new_text if 'new_text' in locals() else (self._extract_text_from_pdf(temp_path) if is_google_doc else "")
                     results[doc_type]['bin'] = final_bytes
                     results[doc_type]['hash'] = new_hash
@@ -357,16 +356,20 @@ class ArchivalEngine:
                     os.rename(temp_path, final_path)
                     results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
                 except Exception as e:
+                    # RECOVER FROM VAULT on failure, but don't mark as changed
                     if last_record and getattr(last_record, f"{doc_type}_local_path"):
                         results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                         results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                         results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
-                        recovered_from_vault += 1
+                        logger.info(f"   [RESILIENCE] {doc_type.upper()} failure, using vault copy (No version jump).")
                     else: raise e
             except Exception as e:
                 error_msg += f"{doc_type.upper()}: {str(e)[:50]}; "
 
-        if total_changed == 0 and recovered_from_vault == 0:
+        # --- THE VERSION GATEKEEPER (SMOKING GUN FIX) ---
+        # If total_changed is 0, it means EVERYTHING was either inherited, identical, or recovered.
+        # We must NOT create a new record in this case.
+        if total_changed == 0:
             if last_record: return {'status': 'unchanged', 'version': last_record.version}
             else: return {'status': 'failed', 'error': error_msg.strip()}
 
