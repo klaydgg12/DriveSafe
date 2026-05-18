@@ -496,52 +496,71 @@ const RegistryDashboard: React.FC = () => {
                                             ) : (
                                                 <td className="px-4 py-4">
                                                     <div className="flex flex-wrap items-center gap-1.5 max-w-[400px]">
-                                                        {[
-                                                            { id: 'srs', label: 'SRS', color: 'blue' },
-                                                            { id: 'sdd', label: 'SDD', color: 'purple' },
-                                                            { id: 'spmp', label: 'SPMP', color: 'emerald' },
-                                                            { id: 'std', label: 'STD', color: 'amber' },
-                                                            { id: 'ri', label: 'RI', color: 'rose' },
-                                                            { id: 'research_paper', label: 'RP', color: 'indigo' },
-                                                            { id: 'usability_test', label: 'UT', color: 'teal' },
-                                                            { id: 'presentation', label: 'PR', color: 'orange' },
-                                                            { id: 'source_code', label: 'SRC', color: 'orange' },
-                                                            { id: 'github', label: 'GH', color: 'slate' },
-                                                            { id: 'database', label: 'DB', color: 'cyan' },
-                                                            { id: 'readme', label: 'RM', color: 'gray' }
-                                                        ].filter(doc => availableDocs.includes(doc.id)).map(doc => {
-                                                            const link = p[`${doc.id}_link` as keyof Project] as string;
-                                                            const isAccessible = validationResults[link] === 'Accessible';
-                                                            const isMissing = !link;
+                                                        {(() => {
+                                                            const standardDocs = [
+                                                                { id: 'srs', label: 'SRS', color: 'blue' },
+                                                                { id: 'sdd', label: 'SDD', color: 'purple' },
+                                                                { id: 'spmp', label: 'SPMP', color: 'emerald' },
+                                                                { id: 'std', label: 'STD', color: 'amber' },
+                                                                { id: 'ri', label: 'RI', color: 'rose' },
+                                                                { id: 'research_paper', label: 'RP', color: 'indigo' },
+                                                                { id: 'usability_test', label: 'UT', color: 'teal' },
+                                                                { id: 'presentation', label: 'PR', color: 'orange' },
+                                                                { id: 'source_code', label: 'SRC', color: 'orange' },
+                                                                { id: 'github', label: 'GH', color: 'slate' },
+                                                                { id: 'database', label: 'DB', color: 'cyan' },
+                                                                { id: 'readme', label: 'RM', color: 'gray' }
+                                                            ];
 
-                                                            const baseColors: Record<string, string> = {
-                                                                blue: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-blue-50 border-blue-100 text-blue-600 hover:bg-blue-100' : 'bg-white border-slate-200 text-slate-400 hover:border-blue-300 hover:text-blue-600',
-                                                                purple: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-purple-50 border-purple-100 text-purple-600 hover:bg-purple-100' : 'bg-white border-slate-200 text-slate-400 hover:border-purple-300 hover:text-purple-600',
-                                                                emerald: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-emerald-50 border-emerald-100 text-emerald-600 hover:bg-emerald-100' : 'bg-white border-slate-200 text-slate-400 hover:border-emerald-300 hover:text-emerald-600',
-                                                                amber: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-amber-50 border-amber-100 text-amber-600 hover:bg-amber-100' : 'bg-white border-slate-200 text-slate-400 hover:border-amber-300 hover:text-amber-600',
-                                                                rose: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-rose-50 border-rose-100 text-rose-600 hover:bg-rose-100' : 'bg-white border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-600',
-                                                                indigo: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-indigo-50 border-indigo-100 text-indigo-600 hover:bg-indigo-100' : 'bg-white border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-600',
-                                                                teal: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-teal-50 border-teal-100 text-teal-600 hover:bg-teal-100' : 'bg-white border-slate-200 text-slate-400 hover:border-teal-300 hover:text-teal-600',
-                                                                orange: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-orange-50 border-orange-100 text-orange-600 hover:bg-orange-100' : 'bg-white border-slate-200 text-slate-400 hover:border-orange-300 hover:text-orange-600',
-                                                                slate: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-700',
-                                                                cyan: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-cyan-50 border-cyan-100 text-cyan-600 hover:bg-cyan-100' : 'bg-white border-slate-200 text-slate-400 hover:border-cyan-300 hover:text-cyan-600',
-                                                                gray: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-slate-50 border-slate-100 text-slate-600 hover:bg-slate-100' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-600'
-                                                            };
-                                                            return (
-                                                                <div key={doc.id} className="relative group/doc">
-                                                                    <a 
-                                                                        href={link || '#'} 
-                                                                        target="_blank" 
-                                                                        rel="noreferrer" 
-                                                                        className={`min-w-[34px] h-7 px-2 flex items-center justify-center rounded-lg border text-[10px] font-black transition-all ${baseColors[doc.color]} ${isMissing ? 'cursor-not-allowed opacity-40' : 'shadow-sm active:scale-95'}`} 
-                                                                        onClick={e => isMissing && e.preventDefault()}
-                                                                        title={`${doc.label}: ${isMissing ? 'Missing' : isAccessible ? 'Verified' : 'Unverified'}`}
-                                                                    >
-                                                                        {doc.label}
-                                                                    </a>
-                                                                </div>
-                                                            );
-                                                        })}
+                                                            const dynamicDocs = availableDocs
+                                                                .filter(docId => !standardDocs.some(sd => sd.id === docId))
+                                                                .map(docId => {
+                                                                    // Generate an acronym or use uppercase
+                                                                    let label = docId.toUpperCase();
+                                                                    if (docId.includes('_')) {
+                                                                        label = docId.split('_').map(w => w[0]).join('').toUpperCase();
+                                                                    } else if (docId.length > 4) {
+                                                                        label = docId.substring(0, 3).toUpperCase();
+                                                                    }
+                                                                    return { id: docId, label, color: 'slate' as const };
+                                                                });
+
+                                                            return [...standardDocs, ...dynamicDocs]
+                                                                .filter(doc => availableDocs.includes(doc.id))
+                                                                .map(doc => {
+                                                                    const link = p[`${doc.id}_link` as keyof Project] as string;
+                                                                    const isAccessible = validationResults[link] === 'Accessible';
+                                                                    const isMissing = !link;
+
+                                                                    const baseColors: Record<string, string> = {
+                                                                        blue: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-blue-50 border-blue-100 text-blue-600 hover:bg-blue-100' : 'bg-white border-slate-200 text-slate-400 hover:border-blue-300 hover:text-blue-600',
+                                                                        purple: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-purple-50 border-purple-100 text-purple-600 hover:bg-purple-100' : 'bg-white border-slate-200 text-slate-400 hover:border-purple-300 hover:text-purple-600',
+                                                                        emerald: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-emerald-50 border-emerald-100 text-emerald-600 hover:bg-emerald-100' : 'bg-white border-slate-200 text-slate-400 hover:border-emerald-300 hover:text-emerald-600',
+                                                                        amber: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-amber-50 border-amber-100 text-amber-600 hover:bg-amber-100' : 'bg-white border-slate-200 text-slate-400 hover:border-amber-300 hover:text-amber-600',
+                                                                        rose: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-rose-50 border-rose-100 text-rose-600 hover:bg-rose-100' : 'bg-white border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-600',
+                                                                        indigo: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-indigo-50 border-indigo-100 text-indigo-600 hover:bg-indigo-100' : 'bg-white border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-600',
+                                                                        teal: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-teal-50 border-teal-100 text-teal-600 hover:bg-teal-100' : 'bg-white border-slate-200 text-slate-400 hover:border-teal-300 hover:text-teal-600',
+                                                                        orange: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-orange-50 border-orange-100 text-orange-600 hover:bg-orange-100' : 'bg-white border-slate-200 text-slate-400 hover:border-orange-300 hover:text-orange-600',
+                                                                        slate: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-700',
+                                                                        cyan: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-cyan-50 border-cyan-100 text-cyan-600 hover:bg-cyan-100' : 'bg-white border-slate-200 text-slate-400 hover:border-cyan-300 hover:text-cyan-600',
+                                                                        gray: isMissing ? 'bg-slate-50 border-slate-100 text-slate-300' : isAccessible ? 'bg-slate-50 border-slate-100 text-slate-600 hover:bg-slate-100' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-600'
+                                                                    };
+                                                                    return (
+                                                                        <div key={doc.id} className="relative group/doc">
+                                                                            <a 
+                                                                                href={link || '#'} 
+                                                                                target="_blank" 
+                                                                                rel="noreferrer" 
+                                                                                className={`min-w-[34px] h-7 px-2 flex items-center justify-center rounded-lg border text-[10px] font-black transition-all ${baseColors[doc.color]} ${isMissing ? 'cursor-not-allowed opacity-40' : 'shadow-sm active:scale-95'}`} 
+                                                                                onClick={e => isMissing && e.preventDefault()}
+                                                                                title={`${doc.label}: ${isMissing ? 'Missing' : isAccessible ? 'Verified' : 'Unverified'}`}
+                                                                            >
+                                                                                {doc.label}
+                                                                            </a>
+                                                                        </div>
+                                                                    );
+                                                                });
+                                                        })()}
                                                     </div>
                                                 </td>
                                             )}

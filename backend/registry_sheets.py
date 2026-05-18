@@ -54,28 +54,42 @@ class RegistrySheetsService:
             mapping = {}
             # EXTREME STRICTNESS to prevent RI/SRS overlap
             keywords = {
-                'project_id': ['team code', 'group code', 'team id', 'team_id'],
+                'project_id': ['team code', 'group code', 'team id', 'team_id', 'group_id'],
                 'student_id': ['id number', 'student number', 'id_number'],
-                'project_title': ['project title', 'title'],
+                'project_title': ['project title', 'title', 'name of project'],
                 'student_name': ['student name'],
-                'srs_link': ['software requirements specification', 'srs'],
-                'sdd_link': ['software design description', 'sdd'],
-                'spmp_link': ['software project management plan', 'spmp'],
-                'std_link': ['software test document', 'std'],
-                'ri_link': ['requirements inventory', 'ri file', 'ri_file'],
-                'research_paper_link': ['research paper', 'acm format'],
-                'usability_test_link': ['usability test results', 'usability test', 'usability'],
-                'presentation_link': ['final presentation', 'presentation ppt', 'presentation_ppt'],
-                'source_code_link': ['zipped source code', 'source code', 'zipped_source'],
-                'github_link': ['github'],
-                'database_link': ['dumped database', 'sql dump', 'database dump'],
-                'readme_link': ['readme']
+                'srs_link': ['finalized software requirements specification', 'software requirements specification', 'srs'],
+                'sdd_link': ['finalized software design description', 'software design description', 'sdd'],
+                'spmp_link': ['finalized software project management plan', 'software project management plan', 'spmp'],
+                'std_link': ['finalized software test document', 'software test document', 'std'],
+                'ri_link': ['requirements inventory', 'ri file', 'ri_file', 'ri'],
+                'research_paper_link': ['research paper (acm format)', 'research paper', 'acm format', 'rp'],
+                'usability_test_link': ['usability test results', 'usability test', 'usability', 'ut'],
+                'presentation_link': ['final presentation ppt', 'final presentation', 'presentation ppt', 'presentation_ppt', 'presentation', 'ppt'],
+                'source_code_link': ['zipped source code', 'source code', 'zipped_source', 'src'],
+                'github_link': ['github', 'gh'],
+                'database_link': ['dumped database', 'sql dump', 'database dump', 'database', 'db'],
+                'readme_link': ['readme', 'rm'],
+                'status': ['status'],
+                'error': ['error', 'error_message', 'remarks']
             }
+            # 1. Map known keywords with high priority
             for key, synonyms in keywords.items():
                 for i, header in enumerate(headers):
-                    if any(syn in header for syn in synonyms):
+                    if any(syn == header or (len(syn) > 3 and syn in header) for syn in synonyms):
                         mapping[key] = i
                         break
+            
+            # 2. Dynamic Mapping: Any unmapped column that isn't a known field 
+            # is treated as a potential deliverable link
+            mapped_indices = set(mapping.values())
+            for i, header in enumerate(headers):
+                if i not in mapped_indices and header:
+                    # Clean the header to use as a key
+                    clean_key = re.sub(r'[^a-z0-9]', '_', header).strip('_')
+                    if clean_key and not clean_key.endswith('_link'):
+                        mapping[f"{clean_key}_link"] = i
+            
             self._header_cache[cache_key] = mapping
             return mapping
         except Exception as e:
@@ -93,6 +107,9 @@ class RegistrySheetsService:
             col_map = self._get_header_map(worksheet)
             team_groups = {}
             
+            # Standard doc types for file ID processing
+            standard_docs = ['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'github', 'database', 'readme', 'research_paper', 'usability_test', 'presentation']
+
             for idx, row in enumerate(all_records[1:], start=2):
                 def get_val(key, default=''):
                     if key in col_map and col_map[key] < len(row):
@@ -112,39 +129,32 @@ class RegistrySheetsService:
                     match = re.search(r'/d/([a-zA-Z0-9_-]{25,})', url)
                     return match.group(1) if match else url
 
-                current_file_ids = {
-                    'srs': clean_link(get_val('srs_link')),
-                    'sdd': clean_link(get_val('sdd_link')),
-                    'spmp': clean_link(get_val('spmp_link')),
-                    'std': clean_link(get_val('std_link')),
-                    'ri': clean_link(get_val('ri_link')),
-                    'source_code': clean_link(get_val('source_code_link')),
-                    'github': get_val('github_link').lower().strip().rstrip('/'),
-                    'database': clean_link(get_val('database_link')),
-                    'readme': clean_link(get_val('readme_link'))
-                }
-
-                if not team_code and not any(current_file_ids.values()): continue
-
-                project = {
+                # Process file IDs for standard and dynamic docs
+                current_file_ids = {}
+                project_data = {
                     'row_index': idx,
                     'project_id': team_code or "N/A",
                     'project_title': name or team_code or f"Team_{idx}",
-                    'srs_link': get_val('srs_link'),
-                    'sdd_link': get_val('sdd_link'),
-                    'spmp_link': get_val('spmp_link'),
-                    'std_link': get_val('std_link'),
-                    'ri_link': get_val('ri_link'),
-                    'source_code_link': get_val('source_code_link'),
-                    'github_link': get_val('github_link'),
-                    'database_link': get_val('database_link'),
-                    'readme_link': get_val('readme_link'),
                     'status': get_val('status', 'Pending'),
-                    'error_message': get_val('error'), # PULL FROM SHEET
+                    'error_message': get_val('error'),
                     'academic_year': sheet_name,
                     'conflicting_fields': [],
-                    '_file_ids': current_file_ids
                 }
+
+                # Populate all mapped columns
+                for key, col_idx in col_map.items():
+                    if col_idx < len(row):
+                        val = get_val(key)
+                        project_data[key] = val
+                        
+                        # If it's a link column, extract file ID for conflict detection
+                        if key.endswith('_link'):
+                            doc_id = key.replace('_link', '')
+                            current_file_ids[doc_id] = clean_link(val) if 'github' not in doc_id else val.lower().strip().rstrip('/')
+
+                project_data['_file_ids'] = current_file_ids
+
+                if not team_code and not any(current_file_ids.values()): continue
 
                 merge_key = str(team_code).strip().lower() if team_code else f"ROW_{idx}"
 
@@ -152,23 +162,23 @@ class RegistrySheetsService:
                     existing = team_groups[merge_key]
                     conflicts = set(existing.get('conflicting_fields', []))
                     
-                    # Merge error messages if both exist
+                    # Merge error messages
                     combined_error = existing.get('error_message', '')
-                    new_error = project.get('error_message', '')
+                    new_error = project_data.get('error_message', '')
                     if new_error and new_error not in combined_error:
-                        project['error_message'] = f"{combined_error} | {new_error}".strip(' | ')
+                        project_data['error_message'] = f"{combined_error} | {new_error}".strip(' | ')
 
-                    doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'source_code', 'github', 'database', 'readme']
-                    for dt in doc_types:
-                        if current_file_ids[dt] and existing['_file_ids'][dt] and current_file_ids[dt] != existing['_file_ids'][dt]:
+                    # Detect conflicts in file IDs
+                    for dt, fid in current_file_ids.items():
+                        if fid and existing['_file_ids'].get(dt) and fid != existing['_file_ids'][dt]:
                             conflicts.add(dt)
-                    project['conflicting_fields'] = list(conflicts)
-                    team_groups[merge_key] = project
+                    project_data['conflicting_fields'] = list(conflicts)
+                    team_groups[merge_key] = project_data
                 else:
-                    team_groups[merge_key] = project
+                    team_groups[merge_key] = project_data
                 
             projects_list = sorted(team_groups.values(), key=lambda x: x['row_index'])
-            available_docs = [key.replace('_link', '') for key in col_map.keys() if '_link' in key]
+            available_docs = [key.replace('_link', '') for key in col_map.keys() if '_link' in key and key not in ['project_id', 'project_title', 'status', 'error', 'student_id', 'student_name']]
             return {'projects': projects_list, 'available_docs': available_docs}
         except Exception as e:
             logger.error(f"Error fetching projects: {e}")
