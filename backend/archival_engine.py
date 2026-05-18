@@ -432,26 +432,26 @@ class ArchivalEngine:
                     # For files where text extraction is unreliable (image-only PDFs, code, etc.) we fall
                     # back to the raw Drive bytes hash (deterministic for uploaded files).
                     #
-                    # Hashes are prefixed ("txt:" / "raw:") so we can distinguish the two strategies and
-                    # treat legacy (unprefixed) hashes as "Tier 1 incompatible" -> let Tier 2/3 catch them
-                    # and soft-migrate to the new prefixed format.
+                    # Hash is plain 64-char SHA-256 (fits the existing String(64) column). The schema
+                    # cannot tell content-hashes from raw-hashes apart, but it doesn't need to: Tier 1
+                    # just compares equality. When Tier 1 misses (e.g. legacy v1 row stored a raw-byte
+                    # hash and the new run produces a content hash), Tier 2/3 catches the duplicate via
+                    # text and soft-migrates the row to the new content-hash format.
                     text_clean_for_hash = re.sub(r'\W+', '', new_text).lower()
                     if len(text_clean_for_hash) >= 50:
-                        new_hash = "txt:" + hashlib.sha256(text_clean_for_hash.encode('utf-8')).hexdigest()
+                        new_hash = hashlib.sha256(text_clean_for_hash.encode('utf-8')).hexdigest()
                         hash_kind = "content"
                     else:
-                        raw = self._last_source_hash or hashlib.sha256(final_bytes).hexdigest()
-                        new_hash = "raw:" + raw
+                        new_hash = self._last_source_hash or hashlib.sha256(final_bytes).hexdigest()
                         hash_kind = "raw-fallback"
 
                     if last_record:
                         # TIER 1: CANONICAL HASH MATCH
                         old_hash = getattr(last_record, f"{doc_type}_hash", None)
-                        old_is_legacy = bool(old_hash) and not (old_hash.startswith("txt:") or old_hash.startswith("raw:"))
                         drive_md5 = metadata.get('md5Checksum') if metadata else "N/A"
-                        logger.info(f"   [TIER-1] {doc_type.upper()} ({hash_kind}, text_len={len(text_clean_for_hash)}): old={(old_hash or 'NULL')[:16]}..., new={new_hash[:16]}..., legacy={old_is_legacy}, drive_md5={drive_md5}")
+                        logger.info(f"   [TIER-1] {doc_type.upper()} ({hash_kind}, text_len={len(text_clean_for_hash)}): old={(old_hash or 'NULL')[:16]}..., new={new_hash[:16]}..., drive_md5={drive_md5}")
 
-                        if old_hash and not old_is_legacy and new_hash == old_hash:
+                        if old_hash and new_hash == old_hash:
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
                             results[doc_type]['hash'] = old_hash
                             results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None) or new_text
@@ -638,6 +638,7 @@ class ArchivalEngine:
                 db.session.add(disk_entry)
                 db.session.commit()
                 return {'status': status, 'version': current_version, 'error': error_msg.strip()}
-            except:
+            except Exception as e2:
                  db.session.rollback()
-                 return {'status': 'failed', 'error': "Fatal DB Error"}
+                 logger.error(f"   [DB-FATAL] Both primary and disk-only commits failed for {project_id}@{academic_year} v{current_version}: primary={str(e)[:200]} ; disk={str(e2)[:200]}", exc_info=True)
+                 return {'status': 'failed', 'error': f"DB commit failed: {str(e2)[:120]}"}
