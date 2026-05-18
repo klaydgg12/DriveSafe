@@ -14,7 +14,7 @@ from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from models import db, ArchivalLedger
 
-# AI Import for Tier 3
+# AI Import for Tier 3 Deduplication
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
@@ -36,11 +36,11 @@ class ArchivalEngine:
         self.identity_label = "TEACHER" if user_credentials else "ROBOT"
         self.creds = user_credentials
         
-        # Primary Service (Teacher)
+        # Primary Identity (Teacher)
         if user_credentials:
             self.service = build('drive', 'v3', credentials=user_credentials, cache_discovery=False)
         
-        # Fallback Service (Service Account "Robot")
+        # Fallback Identity (Service Account "Robot")
         self.sa_service = None
         if service_account_json_path:
             try:
@@ -54,14 +54,14 @@ class ArchivalEngine:
                 if not hasattr(self, 'service'):
                     self.service = self.sa_service
             except Exception as e:
-                logger.error(f"Failed to init service account fallback: {e}")
+                logger.error(f"Failed to init service account: {e}")
         
         if not hasattr(self, 'service'):
              raise ValueError("No authentication method provided for ArchivalEngine")
              
         self.archive_root = archive_root
         self.session = requests.Session()
-        logger.info(f"ArchivalEngine Master v24 Initialized (Hyper-Deduplication Protocol)")
+        logger.info(f"ArchivalEngine Master v24 Canonical (Deep Polish) Initialized")
 
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
@@ -158,38 +158,49 @@ class ArchivalEngine:
         is_google = 'google-apps' in mime_type or (original_url and 'docs.google.com' in str(original_url))
         is_pdf_target = destination_path.lower().endswith('.pdf')
         
-        logger.info(f"[{self.identity_label}] ADAPTIVE ARCHIVE: {file_name}")
+        logger.info(f"[{self.identity_label}] ARCHIVING: {file_name}")
         final_data = None
         
-        protocols = [
-            {'clean': False, 'token': False}, 
-            {'clean': True,  'token': False}, 
-            {'clean': False, 'token': True},  
-            {'clean': True,  'token': True},  
-        ]
-        
-        for p in protocols:
+        # 1. Mirror
+        try:
+            url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=False)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                'Accept': 'application/pdf,application/octet-stream,*/*',
+                'Referer': 'https://docs.google.com/',
+            }
+            if self.creds:
+                if hasattr(self.creds, 'valid') and not self.creds.valid: self.creds.refresh(requests.Session())
+                headers['Authorization'] = f'Bearer {self.creds.token}'
+            resp = self.session.get(url, headers=headers, timeout=60, allow_redirects=True)
+            if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=is_pdf_target):
+                final_data = resp.content
+        except: pass
+
+        # 2. Token Injection
+        if not final_data and self.creds:
             try:
-                token = self.creds.token if (p['token'] and self.creds) else None
-                url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=p['clean'], inject_token=token)
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                    'Accept': 'application/pdf,application/octet-stream,*/*',
-                    'Referer': 'https://docs.google.com/',
-                }
-                if self.creds and not p['token']:
-                    if hasattr(self.creds, 'valid') and not self.creds.valid: self.creds.refresh(requests.Session())
-                    headers['Authorization'] = f'Bearer {self.creds.token}'
-                
-                resp = self.session.get(url, headers=headers, timeout=60, allow_redirects=True)
+                url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=True, inject_token=self.creds.token)
+                resp = self.session.get(url, timeout=60, allow_redirects=True)
                 if resp.status_code == 200 and self.validate_binary(resp.content, is_pdf=is_pdf_target):
                     final_data = resp.content
-                    break
-            except: continue
+            except: pass
 
+        # 3. API
+        if not final_data:
+            try:
+                fh = io.BytesIO()
+                if is_google: request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
+                else: request = self.service.files().get_media(fileId=file_id, supportsAllDrives=True)
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+                while not done: _, done = downloader.next_chunk()
+                if self.validate_binary(fh.getvalue(), is_pdf=is_pdf_target): final_data = fh.getvalue()
+            except: pass
+
+        # 4. Service Account Override
         if not final_data and self.sa_service:
             try:
-                logger.info(f"   [OVERRIDE] Attempting Service Account access...")
                 fh = io.BytesIO()
                 if is_google: request = self.sa_service.files().export_media(fileId=file_id, mimeType='application/pdf')
                 else: request = self.sa_service.files().get_media(fileId=file_id, supportsAllDrives=True)
@@ -199,8 +210,9 @@ class ArchivalEngine:
                 if self.validate_binary(fh.getvalue(), is_pdf=is_pdf_target): final_data = fh.getvalue()
             except: pass
 
-        if not final_data: raise Exception("Access Denied (Google Lock remains despite Adaptive Protocol)")
+        if not final_data: raise Exception("Access Denied (Locked by Institution)")
 
+        # Word to PDF conversion
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
             if final_data.startswith(b'PK\x03\x04') or str(file_name).lower().endswith(('.docx', '.doc')):
                 temp_meta = {'name': f"CONV_{int(time.time())}", 'mimeType': 'application/vnd.google-apps.document'}
@@ -225,7 +237,6 @@ class ArchivalEngine:
         return final_data
 
     def archive_project(self, project_data, workbook_name="Archives", batch_id=None, archived_by=None):
-        # STRATEGIC: Normalizing academic_year to prevent ghost versions from whitespace
         project_id = str(project_data.get('project_id', 'Unknown')).strip().lower()
         project_title = str(project_data.get('project_title', 'Untitled')).strip()
         clean_title = project_title.replace(' ', '_').replace('/', '_').replace('\\', '_')
@@ -234,8 +245,7 @@ class ArchivalEngine:
         base_project_dir = os.path.join(self.archive_root, workbook_name, academic_year, batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}")
         os.makedirs(base_project_dir, exist_ok=True)
         
-        # --- TIER 0: GLOBAL CROSS-SHEET LOCK ---
-        # We target the LATEST record for this team in this school year, REGARDLESS of sheet.
+        # TIER 0: GLOBAL CROSS-SHEET LOCK
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id, academic_year=academic_year
         ).order_by(ArchivalLedger.version.desc()).first()
@@ -249,12 +259,10 @@ class ArchivalEngine:
             link = project_data.get(f'{doc_type}_link')
             results[doc_type]['url'] = link
             
-            # --- GAP-FILLING PERSISTENCE ---
-            # If current sheet doesn't have a link, inherit the old one.
+            # GAP-FILLING PERSISTENCE
             if not link and last_record:
                 old_path = getattr(last_record, f"{doc_type}_local_path")
                 if old_path:
-                    logger.info(f"   [INHERITING] {doc_type.upper()} inherited from previous session.")
                     results[doc_type]['path'] = old_path
                     results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                     results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
@@ -262,7 +270,6 @@ class ArchivalEngine:
                     continue
             
             if not link: continue
-            
             raw_id, is_folder = self._extract_file_id(link)
             if not raw_id: continue
             
@@ -273,22 +280,19 @@ class ArchivalEngine:
             if not file_id: continue
 
             try:
-                # --- TIER 1: METADATA CHECK ---
-                drive_md5 = metadata.get('md5Checksum') if metadata else None
                 results[doc_type]['ts'] = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
-                is_google_doc = doc_type in ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'readme']
+                mime_type = metadata.get('mimeType', '').lower() if metadata else ''
+                # CORRECTED is_google_doc detection
+                is_google_doc = 'google-apps' in mime_type
                 
                 is_modified = True
                 if last_record:
-                    vault_hash = getattr(last_record, f"{doc_type}_hash")
-                    if drive_md5 and vault_hash and drive_md5 == vault_hash:
-                        is_modified = False
-                    else:
-                        try:
-                            drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
-                            vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
-                            if (drive_dt - vault_dt).total_seconds() <= 5: is_modified = False
-                        except: pass
+                    # Tier-0 fast skip logic: Only rely on Timestamp with buffer (MD5/SHA collision removed)
+                    try:
+                        drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
+                        vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc)
+                        if (drive_dt - vault_dt).total_seconds() <= 5: is_modified = False
+                    except: pass
 
                 if not is_modified:
                     results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
@@ -305,7 +309,7 @@ class ArchivalEngine:
                     new_hash = hashlib.sha256(final_bytes).hexdigest()
                     
                     if last_record:
-                        # --- TIER 2: BIT MATCH ---
+                        # TIER 1: BIT MATCH
                         old_hash = getattr(last_record, f"{doc_type}_hash")
                         if new_hash == old_hash:
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
@@ -314,34 +318,32 @@ class ArchivalEngine:
                             if os.path.exists(temp_path): os.remove(temp_path)
                             continue
 
-                        # --- TIER 3: HYPER-SENSITIVE DNA MATCH ---
-                        if is_google_doc:
-                            new_text = self._extract_text_from_pdf(temp_path)
-                            old_text = getattr(last_record, f"{doc_type}_text")
+                        # TIER 2 & 3: DNA & AI DEDUPLICATION
+                        new_text = self._extract_text_from_pdf(temp_path)
+                        old_text = getattr(last_record, f"{doc_type}_text")
+                        
+                        def get_clean_text(t): return re.sub(r'\W+', '', str(t)).lower() if t else ""
+                        new_clean = get_clean_text(new_text)
+                        old_clean = get_clean_text(old_text)
+                        
+                        is_dup = False
+                        if new_clean == old_clean: is_dup = True
+                        elif AI_AVAILABLE and new_clean and old_clean:
+                            try:
+                                vect = TfidfVectorizer(min_df=1)
+                                tfidf = vect.fit_transform([old_text, new_text])
+                                sim = (tfidf * tfidf.T).toarray()[0,1]
+                                if sim > 0.98: is_dup = True
+                            except: pass
                             
-                            def get_clean_text(t): return re.sub(r'\W+', '', str(t)).lower() if t else ""
-                            new_clean = get_clean_text(new_text)
-                            old_clean = get_clean_text(old_text)
-                            
-                            is_dup = False
-                            if new_clean == old_clean: is_dup = True
-                            elif AI_AVAILABLE and new_clean and old_clean:
-                                try:
-                                    vect = TfidfVectorizer(min_df=1)
-                                    tfidf = vect.fit_transform([old_text, new_text])
-                                    sim = (tfidf * tfidf.T).toarray()[0,1]
-                                    if sim > 0.98: is_dup = True # 98% Fuzzy Threshold
-                                except: pass
-                                
-                            if is_dup:
-                                logger.info(f"   [HYPER-DEDUPLICATED] {doc_type.upper()} matches content. Skipping v2.")
-                                results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
-                                results[doc_type]['hash'] = old_hash
-                                results[doc_type]['text'] = old_text
-                                if os.path.exists(temp_path): os.remove(temp_path)
-                                continue
+                        if is_dup:
+                            results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
+                            results[doc_type]['hash'] = old_hash
+                            results[doc_type]['text'] = old_text
+                            if os.path.exists(temp_path): os.remove(temp_path)
+                            continue
 
-                    # TRULY NEW CONTENT
+                    # CONTENT IS NEW
                     new_text = self._extract_text_from_pdf(temp_path) if is_google_doc else ""
                     results[doc_type]['bin'] = final_bytes
                     results[doc_type]['hash'] = new_hash
@@ -357,12 +359,10 @@ class ArchivalEngine:
                         results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path")
                         results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash")
                         results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text")
-                        logger.info(f"   [RESILIENCE] Using vault copy for {doc_type.upper()}.")
                     else: raise e
             except Exception as e:
                 error_msg += f"{doc_type.upper()}: {str(e)[:50]}; "
 
-        # --- THE ABSOLUTE GATEKEEPER ---
         if total_changed == 0:
             if last_record: return {'status': 'unchanged', 'version': last_record.version}
             else: return {'status': 'failed', 'error': error_msg.strip()}
@@ -384,7 +384,7 @@ class ArchivalEngine:
                 spmp_original_url=results['spmp']['url'], std_original_url=results['std']['url'],
                 ri_original_url=results['ri']['url'], research_paper_original_url=results['research_paper']['url'],
                 usability_test_original_url=results['usability_test']['url'], presentation_original_url=results['presentation']['url'],
-                source_code_original_url=results['source_code']['url'], github_original_url=results['github_link'] if results['readme']['url'] else None,
+                source_code_original_url=results['source_code']['url'], github_original_url=project_data.get('github_link'),
                 database_original_url=results['database']['url'], readme_original_url=results['readme']['url'],
                 srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
                 spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
@@ -424,8 +424,8 @@ class ArchivalEngine:
                     spmp_original_url=results['spmp']['url'], std_original_url=results['std']['url'],
                     ri_original_url=results['ri']['url'], research_paper_original_url=results['research_paper']['url'],
                     usability_test_original_url=results['usability_test']['url'], presentation_original_url=results['presentation']['url'],
-                    source_code_original_url=results['source_code']['url'], database_original_url=results['database']['url'],
-                    readme_original_url=results['readme']['url'],
+                    source_code_original_url=results['source_code']['url'], github_original_url=project_data.get('github_link'),
+                    database_original_url=results['database']['url'], readme_original_url=results['readme']['url'],
                     srs_local_path=results['srs']['path'], sdd_local_path=results['sdd']['path'],
                     spmp_local_path=results['spmp']['path'], std_local_path=results['std']['path'],
                     ri_local_path=results['ri']['path'], research_paper_local_path=results['research_paper']['path'],
