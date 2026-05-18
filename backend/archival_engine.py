@@ -66,6 +66,32 @@ class ArchivalEngine:
         self._tls = threading.local()
         logger.info(f"ArchivalEngine Master v27 Canonical Initialized")
 
+    # Doc types that are NOT documents -- archive them in their native binary form
+    # instead of trying to "convert to PDF" (which is impossible for ZIP/SQL/XLSX/etc.).
+    # When you click these in the dashboard you'll get the original .zip / .sql / .xlsx back,
+    # exactly as the student uploaded it.
+    NATIVE_BINARY_DOC_TYPES = {'source_code', 'database'}
+
+    def _ext_for_doc(self, doc_type, metadata):
+        """Pick the on-disk extension for a given doc type.
+        - Document types (SRS / SDD / etc.) -> '.pdf' (existing behaviour, unchanged).
+        - source_code / database -> derive from metadata so we keep the file in its
+          native form (e.g. .zip, .sql, .xlsx, .rar, ...). Falls back to a safe
+          default if metadata is missing.
+        """
+        if doc_type not in self.NATIVE_BINARY_DOC_TYPES:
+            return '.pdf'
+        name = ((metadata or {}).get('name') or '').lower()
+        mime = ((metadata or {}).get('mimeType') or '').lower()
+        for ext in ('.tar.gz', '.tgz', '.zip', '.rar', '.7z', '.sql', '.xlsx', '.xls', '.csv', '.db', '.sqlite', '.bak', '.dmp', '.json'):
+            if name.endswith(ext):
+                return ext
+        if 'zip' in mime: return '.zip'
+        if 'sql' in mime: return '.sql'
+        if 'spreadsheet' in mime or 'excel' in mime: return '.xlsx'
+        if 'csv' in mime: return '.csv'
+        return '.zip' if doc_type == 'source_code' else '.bin'
+
     def _extract_file_id(self, url_or_id):
         if not url_or_id: return None, False
         s = str(url_or_id).replace('\\', '')
@@ -266,28 +292,45 @@ class ArchivalEngine:
             except: pass
 
         # 3. API
-        if not final_data:
-            try:
+        # Helper that tries get_media first, and if Drive answers "fileNotDownloadable"
+        # (which happens whenever the file is actually a native gdoc but our metadata
+        # fetch couldn't tell us so), automatically retries via export_media. This is
+        # what previously surfaced as "Access Denied for Document (mime=unknown)".
+        def _api_download(svc):
+            def _try(use_export):
                 fh = io.BytesIO()
-                if is_google: request = self.service.files().export_media(fileId=file_id, mimeType='application/pdf')
-                else: request = self.service.files().get_media(fileId=file_id, supportsAllDrives=True)
-                downloader = MediaIoBaseDownload(fh, request)
+                if use_export:
+                    req = svc.files().export_media(fileId=file_id, mimeType='application/pdf')
+                else:
+                    req = svc.files().get_media(fileId=file_id, supportsAllDrives=True)
+                downloader = MediaIoBaseDownload(fh, req)
                 done = False
                 while not done: _, done = downloader.next_chunk()
-                if self.validate_binary(fh.getvalue(), is_pdf=strict_pdf_check): final_data = fh.getvalue()
-            except: pass
+                return fh.getvalue()
+            try:
+                data = _try(use_export=is_google)
+                if self.validate_binary(data, is_pdf=strict_pdf_check):
+                    return data
+            except Exception as e:
+                msg = str(e).lower()
+                # If we tried get_media and Drive says it's not downloadable, the file is
+                # actually a native gdoc -- retry via export_media (PDF) as a last resort.
+                if not is_google and ('filenotdownloadable' in msg or 'cannot be downloaded' in msg or '403' in msg):
+                    try:
+                        data = _try(use_export=True)
+                        if self.validate_binary(data, is_pdf=strict_pdf_check):
+                            return data
+                    except: pass
+            return None
+
+        if not final_data:
+            data = _api_download(self.service)
+            if data: final_data = data
 
         # 4. Service Account Override
         if not final_data and self.sa_service:
-            try:
-                fh = io.BytesIO()
-                if is_google: request = self.sa_service.files().export_media(fileId=file_id, mimeType='application/pdf')
-                else: request = self.sa_service.files().get_media(fileId=file_id, supportsAllDrives=True)
-                downloader = MediaIoBaseDownload(fh, request)
-                done = False
-                while not done: _, done = downloader.next_chunk()
-                if self.validate_binary(fh.getvalue(), is_pdf=strict_pdf_check): final_data = fh.getvalue()
-            except: pass
+            data = _api_download(self.sa_service)
+            if data: final_data = data
 
         if not final_data: raise Exception(f"Access Denied for {file_name} (mime={mime_type or 'unknown'})")
 
@@ -406,12 +449,17 @@ class ArchivalEngine:
 
                 doc_dir = os.path.join(base_project_dir, doc_type.upper())
                 os.makedirs(doc_dir, exist_ok=True)
-                temp_path = os.path.join(doc_dir, f"TEMP_{doc_type.upper()}.pdf")
+                # source_code / database keep their native extension (.zip, .sql, .xlsx, ...)
+                # so we don't force a PDF conversion that can't possibly succeed.
+                ext = self._ext_for_doc(doc_type, metadata)
+                temp_path = os.path.join(doc_dir, f"TEMP_{doc_type.upper()}{ext}")
 
                 try:
                     final_bytes = self.download_file(file_id, temp_path, original_url=link)
                     new_hash = getattr(self._tls, 'last_source_hash', None) or hashlib.sha256(final_bytes).hexdigest()
-                    new_text = self._extract_text_from_pdf(temp_path) or ""
+                    # Only attempt PDF text extraction on actual PDFs; for .zip/.sql/.xlsx the
+                    # raw-byte hash from download_file is the dedup signal we'll use.
+                    new_text = self._extract_text_from_pdf(temp_path) if ext == '.pdf' else ""
 
                     if last_record:
                         # TIER 1: BIT MATCH (Raw Byte Pipeline)
@@ -470,7 +518,8 @@ class ArchivalEngine:
                     results[doc_type]['is_backfill'] = is_bf
                     
                     v = last_record.version if is_bf else (last_record.version if last_record else 0) + 1
-                    final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{v}.pdf")
+                    # Preserve native extension for source_code/database (.zip / .sql / .xlsx)
+                    final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{v}{ext}")
                     os.rename(temp_path, final_path)
                     results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
                 except Exception as e:
