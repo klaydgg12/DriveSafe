@@ -547,7 +547,7 @@ class ArchivalEngine:
                                 vect = TfidfVectorizer(min_df=1)
                                 tfidf = vect.fit_transform([old_text, new_text])
                                 sim = float((tfidf * tfidf.T).toarray()[0, 1])
-                                if sim > 0.995: is_dup = True
+                                if sim > 0.98: is_dup = True
                             except: pass
                             
                         if is_dup:
