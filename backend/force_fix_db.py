@@ -71,7 +71,20 @@ def force_fix():
                 
                 ('research_paper_text', 'TEXT'),
                 ('usability_test_text', 'TEXT'),
-                ('readme_text', 'TEXT')
+                ('readme_text', 'TEXT'),
+
+                # Individual Revision Counters
+                ('srs_rev', 'INT DEFAULT 0'),
+                ('sdd_rev', 'INT DEFAULT 0'),
+                ('spmp_rev', 'INT DEFAULT 0'),
+                ('std_rev', 'INT DEFAULT 0'),
+                ('ri_rev', 'INT DEFAULT 0'),
+                ('research_paper_rev', 'INT DEFAULT 0'),
+                ('usability_test_rev', 'INT DEFAULT 0'),
+                ('presentation_rev', 'INT DEFAULT 0'),
+                ('source_code_rev', 'INT DEFAULT 0'),
+                ('database_rev', 'INT DEFAULT 0'),
+                ('readme_rev', 'INT DEFAULT 0')
             ]
 
             # Get existing columns

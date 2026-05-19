@@ -15,6 +15,17 @@ interface Project {
   status: string;
   version: number;
   error?: string;
+  srs_rev?: number;
+  sdd_rev?: number;
+  spmp_rev?: number;
+  std_rev?: number;
+  ri_rev?: number;
+  research_paper_rev?: number;
+  usability_test_rev?: number;
+  presentation_rev?: number;
+  source_code_rev?: number;
+  database_rev?: number;
+  readme_rev?: number;
 }
 
 interface Transaction {
@@ -292,7 +303,32 @@ const ArchiveAnalyticsPage = () => {
                                                 <span className="text-xs font-bold text-slate-500 truncate block max-w-[400px]">{p.project_title}</span>
                                               </td>
                                               <td className="py-3">
-                                                <span className="text-[10px] font-black px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-md">v{p.version}</span>
+                                                <div className="flex flex-wrap gap-1">
+                                                  {[
+                                                    { id: 'srs', label: 'SRS' },
+                                                    { id: 'sdd', label: 'SDD' },
+                                                    { id: 'spmp', label: 'SPMP' },
+                                                    { id: 'std', label: 'STD' },
+                                                    { id: 'ri', label: 'RI' },
+                                                    { id: 'research_paper', label: 'RP' },
+                                                    { id: 'usability_test', label: 'UT' },
+                                                    { id: 'presentation', label: 'PR' },
+                                                    { id: 'source_code', label: 'SRC' },
+                                                    { id: 'database', label: 'DB' },
+                                                    { id: 'readme', label: 'RM' }
+                                                  ].map(doc => {
+                                                    const rev = (p as any)[`${doc.id}_rev`];
+                                                    if (!rev) return null;
+                                                    return (
+                                                      <span key={doc.id} className="text-[9px] font-black px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded border border-slate-200" title={`${doc.label} Revision ${rev}`}>
+                                                        {doc.label} v{rev}
+                                                      </span>
+                                                    );
+                                                  })}
+                                                  <span className="text-[10px] font-black px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-md border border-indigo-100" title={`Project Snapshot v${p.version}`}>
+                                                    SNAP v{p.version}
+                                                  </span>
+                                                </div>
                                               </td>
                                               <td className="py-3 text-right pr-6">
                                                 <div className="flex items-center justify-end gap-2">

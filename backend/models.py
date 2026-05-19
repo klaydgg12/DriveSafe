@@ -84,6 +84,19 @@ class ArchivalLedger(db.Model):
     usability_test_text = db.Column(db.Text, nullable=True)
     readme_text = db.Column(db.Text, nullable=True)
 
+    # Individual Revision Counters
+    srs_rev = db.Column(db.Integer, default=0)
+    sdd_rev = db.Column(db.Integer, default=0)
+    spmp_rev = db.Column(db.Integer, default=0)
+    std_rev = db.Column(db.Integer, default=0)
+    ri_rev = db.Column(db.Integer, default=0)
+    research_paper_rev = db.Column(db.Integer, default=0)
+    usability_test_rev = db.Column(db.Integer, default=0)
+    presentation_rev = db.Column(db.Integer, default=0)
+    source_code_rev = db.Column(db.Integer, default=0)
+    database_rev = db.Column(db.Integer, default=0)
+    readme_rev = db.Column(db.Integer, default=0)
+
     status = db.Column(db.String(50), default='pending')
     version = db.Column(db.Integer, default=1)
     batch_id = db.Column(db.String(50), nullable=True)

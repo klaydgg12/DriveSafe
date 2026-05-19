@@ -64,21 +64,12 @@ class ArchivalEngine:
         
         # Thread-local storage for parallel-safe hash tracking
         self._tls = threading.local()
-        logger.info(f"ArchivalEngine Master v27 Canonical Initialized")
+        logger.info(f"ArchivalEngine Master v28 Canonical Initialized")
 
     # Doc types that are NOT documents -- archive them in their native binary form
-    # instead of trying to "convert to PDF" (which is impossible for ZIP/SQL/XLSX/etc.).
-    # When you click these in the dashboard you'll get the original .zip / .sql / .xlsx back,
-    # exactly as the student uploaded it.
     NATIVE_BINARY_DOC_TYPES = {'source_code', 'database'}
 
     def _ext_for_doc(self, doc_type, metadata):
-        """Pick the on-disk extension for a given doc type.
-        - Document types (SRS / SDD / etc.) -> '.pdf' (existing behaviour, unchanged).
-        - source_code / database -> derive from metadata so we keep the file in its
-          native form (e.g. .zip, .sql, .xlsx, .rar, ...). Falls back to a safe
-          default if metadata is missing.
-        """
         if doc_type not in self.NATIVE_BINARY_DOC_TYPES:
             return '.pdf'
         name = ((metadata or {}).get('name') or '').lower()
@@ -106,10 +97,6 @@ class ArchivalEngine:
 
     @staticmethod
     def _is_transient(exc):
-        """Network/SSL/timeout errors that are worth retrying. The user's environment
-        (likely an AV that intercepts TLS) frequently aborts the first handshake but
-        succeeds on the second attempt, so a tiny retry loop massively improves
-        archive success rate."""
         msg = str(exc).lower()
         return any(k in msg for k in (
             'ssl', 'timed out', 'timeout', 'connection reset', 'connection aborted',
@@ -250,7 +237,6 @@ class ArchivalEngine:
             return None, None
 
     def _extract_text_from_pdf(self, file_path):
-        # High-Speed DNA extraction (8 pages)
         try:
             text = ""
             with pdfplumber.open(file_path) as pdf:
@@ -293,9 +279,6 @@ class ArchivalEngine:
         
         mime_type = meta.get('mimeType', '').lower() if meta else 'unknown'
         file_name = meta.get('name', 'unknown') if meta else 'Document'
-        # Trust mime over URL: Drive renders uploaded .xlsx / .docx / .pptx with
-        # docs.google.com/... viewer URLs even though they are NOT native gdocs and
-        # cannot be exported. Only fall back to URL-sniffing when we have no mime.
         if mime_type and mime_type != 'unknown':
             is_google = 'google-apps' in mime_type
         else:
@@ -306,7 +289,7 @@ class ArchivalEngine:
         logger.info(f"[{self.identity_label}] ARCHIVING: {file_name} (mime={mime_type or 'n/a'}, native={is_google})")
         final_data = None
         
-        # 1. Digital Twin Mirror (Optimized for speed)
+        # 1. Mirror
         if not is_google:
             try:
                 url = self._construct_url(file_id, original_url, is_google_doc=is_google, clean=False)
@@ -333,10 +316,6 @@ class ArchivalEngine:
             except: pass
 
         # 3. API
-        # get_media first; on "fileNotDownloadable" (native gdoc) fall back to export_media.
-        # On "exportSizeLimitExceeded" (spreadsheet too big for PDF) fall back to xlsx.
-        # All API calls are wrapped in _with_retry so a single SSL hiccup doesn't kill the
-        # archive -- the user's environment has flaky TLS handshakes.
         def _api_download(svc):
             def _do_call(use_export, export_mime='application/pdf'):
                 fh = io.BytesIO()
@@ -359,7 +338,6 @@ class ArchivalEngine:
                     return data
             except Exception as e:
                 msg = str(e).lower()
-                # Native gdoc but we thought it wasn't -- retry as PDF export.
                 if not is_google and ('filenotdownloadable' in msg or 'cannot be downloaded' in msg or '403' in msg):
                     try:
                         data = _try(use_export=True)
@@ -367,11 +345,6 @@ class ArchivalEngine:
                             return data
                     except Exception as e2:
                         msg = str(e2).lower()
-                # We thought it WAS a native gdoc but Drive says it isn't exportable
-                # (e.g. an uploaded .xlsx whose viewer URL is docs.google.com/spreadsheets/
-                # so we mis-detected it). Retry with raw get_media -- it'll come down as
-                # the original .xlsx / .docx / .pptx bytes which the Office->PDF
-                # conversion block downstream can then turn into a real PDF.
                 if is_google and ('filenotexportable' in msg or 'not exportable' in msg):
                     try:
                         data = _try(use_export=False)
@@ -379,10 +352,6 @@ class ArchivalEngine:
                             return data
                     except Exception as e3:
                         msg = str(e3).lower()
-                # Spreadsheet too big for PDF export -- fall back to native .xlsx.
-                # This only helps when destination is NOT a strict-PDF target; otherwise
-                # we'd save .xlsx bytes into a .pdf file. The worker can re-target by
-                # passing a .xlsx destination if needed (future enhancement).
                 if 'exportsizelimitexceeded' in msg and not strict_pdf_check:
                     try:
                         data = _try(use_export=True, export_mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -400,17 +369,12 @@ class ArchivalEngine:
             data = _api_download(self.sa_service)
             if data: final_data = data
 
-        if not final_data: raise Exception(f"Access Denied for {file_name} (mime={mime_type or 'unknown'})")
+        if not final_data: raise Exception(f"Access Denied for {file_name}")
 
-        # RAW SOURCE HASH - Deterministic bits for uploaded files
+        # RAW SOURCE HASH
         self._tls.last_source_hash = hashlib.sha256(final_data).hexdigest()
 
         # Office/Text -> PDF conversion
-        # We ask Drive to ingest the binary as a Google native doc and then export to
-        # PDF. The native target type depends on the source: .docx -> document,
-        # .xlsx -> spreadsheet, .pptx -> presentation. Using the wrong target makes
-        # Drive silently produce an empty/broken result, which is what previously
-        # caused "Failed to load PDF document" for archived xlsx/pptx files.
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
             lower_name = str(file_name).lower()
             mt = (mime_type or '')
@@ -424,8 +388,6 @@ class ArchivalEngine:
                 or 'text/' in mt
                 or 'markdown' in mt
             )
-            # Pick the upload mime (what we tell Drive the bytes are) and the target
-            # gdoc mime (what we ask Drive to convert them into).
             upload_mime = None
             target_mime = None
             if is_doc or (is_zip_office and not is_sheet and not is_slide):
@@ -455,18 +417,12 @@ class ArchivalEngine:
                         d_done = False
                         while not d_done: _, d_done = dld.next_chunk()
                         data = fh.getvalue()
-                        # Require a real PDF AND a sane minimum size (Drive sometimes
-                        # returns a 1-2KB PDF stub when conversion fails partway).
                         if data.startswith(b'%PDF-') and len(data) > 1024:
                             final_data = data
-                            logger.info(f"   [CONV] {file_name} -> PDF via {target_mime.split('.')[-1]} ({len(data)} bytes)")
-                        else:
-                            logger.warning(f"   [CONV] {file_name}: export produced {len(data)} bytes, head={data[:8]!r}")
                     finally:
                         try: self.service.files().delete(fileId=t_id, supportsAllDrives=True).execute()
                         except: pass
-                except Exception as ce:
-                    logger.warning(f"   [CONV] failed for {file_name}: {str(ce)[:160]}")
+                except: pass
 
         if is_pdf_target and not final_data.startswith(b'%PDF-'): raise Exception("PDF Conversion Locked")
         with open(destination_path, 'wb') as f: f.write(final_data)
@@ -489,13 +445,12 @@ class ArchivalEngine:
         base_project_dir = os.path.join(self.archive_root, workbook_name, academic_year, batch_id if batch_id else 'Direct', f"{project_id}_{clean_title}")
         os.makedirs(base_project_dir, exist_ok=True)
 
-        # Tier 0 Global Lock
         last_record = ArchivalLedger.query.filter_by(
             project_id=project_id, academic_year=academic_year
         ).order_by(ArchivalLedger.version.desc()).first()
 
         doc_types = ['srs', 'sdd', 'spmp', 'std', 'ri', 'research_paper', 'usability_test', 'presentation', 'source_code', 'database', 'readme']
-        results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'is_backfill': False, 'bin': b'', 'ts': None, 'text': '', 'url': None} for dt in doc_types}
+        results = {dt: {'path': None, 'hash': None, 'is_changed': False, 'is_backfill': False, 'bin': b'', 'ts': None, 'text': '', 'url': None, 'rev': 0} for dt in doc_types}
         total_changed = 0   
         backfilled = 0      
         error_msg = ""
@@ -506,7 +461,7 @@ class ArchivalEngine:
             link = project_data.get(f'{doc_type}_link')
             results[doc_type]['url'] = link
             
-            # Gap-Filling
+            # 1. Inherit from global history (Gap-Filling)
             if not link and last_record:
                 old_path = getattr(last_record, f"{doc_type}_local_path", None)
                 if old_path:
@@ -514,27 +469,18 @@ class ArchivalEngine:
                     results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash", None)
                     results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None)
                     results[doc_type]['url'] = getattr(last_record, f"{doc_type}_original_url", None)
+                    results[doc_type]['rev'] = getattr(last_record, f"{doc_type}_rev", 1)
                     return
             
-            if not link:
-                # Make this visible -- silent returns previously masked PPT / UT / ACM
-                # cases when the spreadsheet column was simply blank.
-                logger.info(f"   [SKIP] {doc_type.upper()}: no link in spreadsheet (and no prior version to gap-fill)")
-                return
+            if not link: return
             raw_id, is_folder = self._extract_file_id(link)
-            if not raw_id:
-                logger.warning(f"   [SKIP] {doc_type.upper()}: link has no extractable Drive ID -> {str(link)[:140]}")
-                with _lock: error_msg += f"{doc_type.upper()}: bad link; "
-                return
+            if not raw_id: return
             
             file_id = raw_id
             metadata = None
             if is_folder: file_id, metadata = self._resolve_folder(raw_id, target_hint=doc_type.upper())
             else: metadata = self._get_file_metadata(file_id)
-            if not file_id:
-                logger.warning(f"   [SKIP] {doc_type.upper()}: folder {raw_id} did not resolve to any candidate file")
-                with _lock: error_msg += f"{doc_type.upper()}: folder empty; "
-                return
+            if not file_id: return
 
             try:
                 results[doc_type]['ts'] = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
@@ -542,46 +488,47 @@ class ArchivalEngine:
                 is_google_doc = 'google-apps' in mime_type
                 self._tls.last_source_hash = None
 
+                # Tier 0: Fast Skip (Timestamp)
                 is_modified = True
                 if last_record:
-                    # Tier 0: Fast Skip
                     try:
                         drive_dt = datetime.datetime.fromisoformat(results[doc_type]['ts'].replace('Z', '+00:00'))
                         vault_dt = last_record.archived_at.replace(tzinfo=datetime.timezone.utc) if last_record.archived_at.tzinfo is None else last_record.archived_at
-                        if (drive_dt - vault_dt).total_seconds() <= 5: is_modified = False
+                        if (drive_dt - vault_dt).total_seconds() <= 5: 
+                            # Double check if we actually have the file before skipping
+                            if getattr(last_record, f"{doc_type}_local_path", None):
+                                is_modified = False
                     except: pass
 
                 if not is_modified:
                     results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
                     results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash", None)
                     results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None)
+                    results[doc_type]['rev'] = getattr(last_record, f"{doc_type}_rev", 1)
                     return
 
                 doc_dir = os.path.join(base_project_dir, doc_type.upper())
                 os.makedirs(doc_dir, exist_ok=True)
-                # source_code / database keep their native extension (.zip, .sql, .xlsx, ...)
-                # so we don't force a PDF conversion that can't possibly succeed.
                 ext = self._ext_for_doc(doc_type, metadata)
                 temp_path = os.path.join(doc_dir, f"TEMP_{doc_type.upper()}{ext}")
 
                 try:
                     final_bytes = self.download_file(file_id, temp_path, original_url=link)
                     new_hash = getattr(self._tls, 'last_source_hash', None) or hashlib.sha256(final_bytes).hexdigest()
-                    # Only attempt PDF text extraction on actual PDFs; for .zip/.sql/.xlsx the
-                    # raw-byte hash from download_file is the dedup signal we'll use.
                     new_text = self._extract_text_from_pdf(temp_path) if ext == '.pdf' else ""
 
                     if last_record:
-                        # TIER 1: BIT MATCH (Raw Byte Pipeline)
+                        # TIER 1: BIT MATCH
                         old_hash = getattr(last_record, f"{doc_type}_hash", None)
                         if old_hash and new_hash == old_hash:
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
                             results[doc_type]['hash'] = old_hash
                             results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None) or new_text
+                            results[doc_type]['rev'] = getattr(last_record, f"{doc_type}_rev", 1)
                             if os.path.exists(temp_path): os.remove(temp_path)
                             return
 
-                        # TIER 2 & 3: DNA & AI DEDUPLICATION
+                        # TIER 2 & 3: DNA & AI Match
                         old_text = getattr(last_record, f"{doc_type}_text", None) or ""
                         if not old_text:
                             old_path_disk = getattr(last_record, f"{doc_type}_local_path", None)
@@ -600,25 +547,27 @@ class ArchivalEngine:
                                 vect = TfidfVectorizer(min_df=1)
                                 tfidf = vect.fit_transform([old_text, new_text])
                                 sim = float((tfidf * tfidf.T).toarray()[0, 1])
-                                if sim > 0.98: is_dup = True
+                                if sim > 0.995: is_dup = True
                             except: pass
                             
                         if is_dup:
                             results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
-                            results[doc_type]['hash'] = new_hash # Soft-migrate hash
+                            results[doc_type]['hash'] = new_hash
                             results[doc_type]['text'] = old_text or new_text
+                            results[doc_type]['rev'] = getattr(last_record, f"{doc_type}_rev", 1)
                             with _lock: backfilled += 1
                             results[doc_type]['is_backfill'] = True
                             if os.path.exists(temp_path): os.remove(temp_path)
                             return
 
-                    # CONTENT IS NEW
+                    # CONTENT IS TRULY NEW
                     results[doc_type]['bin'] = final_bytes
                     results[doc_type]['hash'] = new_hash
                     results[doc_type]['text'] = new_text
                     
-                    prev_hash_for_doc = getattr(last_record, f"{doc_type}_hash", None)
-                    is_bf = bool(last_record) and not prev_hash_for_doc
+                    old_rev = getattr(last_record, f"{doc_type}_rev", 0) if last_record else 0
+                    prev_hash = getattr(last_record, f"{doc_type}_hash", None)
+                    is_bf = bool(last_record) and not prev_hash
                     
                     with _lock:
                         if is_bf: backfilled += 1
@@ -626,10 +575,9 @@ class ArchivalEngine:
                     
                     results[doc_type]['is_changed'] = not is_bf
                     results[doc_type]['is_backfill'] = is_bf
+                    results[doc_type]['rev'] = old_rev if is_bf else old_rev + 1
                     
-                    v = last_record.version if is_bf else (last_record.version if last_record else 0) + 1
-                    # Preserve native extension for source_code/database (.zip / .sql / .xlsx)
-                    final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{v}{ext}")
+                    final_path = os.path.join(doc_dir, f"{clean_title}_{doc_type.upper()}_v{results[doc_type]['rev']}{ext}")
                     os.rename(temp_path, final_path)
                     results[doc_type]['path'] = os.path.relpath(final_path, self.archive_root)
                 except Exception as e:
@@ -637,37 +585,27 @@ class ArchivalEngine:
                         results[doc_type]['path'] = getattr(last_record, f"{doc_type}_local_path", None)
                         results[doc_type]['hash'] = getattr(last_record, f"{doc_type}_hash", None)
                         results[doc_type]['text'] = getattr(last_record, f"{doc_type}_text", None)
+                        results[doc_type]['rev'] = getattr(last_record, f"{doc_type}_rev", 1)
                     else: raise e
             except Exception as e:
                 with _lock: error_msg += f"{doc_type.upper()}: {str(e)[:50]}; "
 
-        # SERIAL FETCHING (1 worker)
-        # We intentionally drop concurrency to 1 because many AV / endpoint-security
-        # products (Kaspersky, ESET, BitDefender, Avast HTTPS-scan, corporate MITM
-        # proxies) corrupt TLS streams when several simultaneous HTTPS sockets are
-        # opened to *.googleapis.com -- the symptom is repeated [SSL: BAD_RECORD_MAC]
-        # / [SSL: WRONG_VERSION_NUMBER] / [SSL: UNEXPECTED_RECORD] / IncompleteRead
-        # errors plus silent process termination mid-archive. Serial mode trades
-        # ~4x wall time per project for dramatically higher TLS reliability.
-        # If your environment has no TLS interception you can safely bump this back
-        # up to 4 for ~4x speed.
+        # SERIAL FETCHING for stability
         with ThreadPoolExecutor(max_workers=1) as pool:
-            # list() forces eager evaluation so any per-doc exception caught inside
-            # _worker is logged immediately rather than swallowed by lazy map().
             list(pool.map(_worker, doc_types))
 
         if total_changed == 0:
             if last_record and backfilled > 0:
                 try:
-                    MAX_BIN_SIZE_BF = 15 * 1024 * 1024
                     for dt in doc_types:
                         if not results[dt].get('is_backfill'): continue
                         setattr(last_record, f"{dt}_local_path", results[dt]['path'])
                         setattr(last_record, f"{dt}_hash", results[dt]['hash'])
-                        setattr(last_record, f"{dt}_original_url", results[dt]['url'])
+                        setattr(last_record, f"{dt}_rev", results[dt]['rev'] or 1)
                         if hasattr(last_record, f"{dt}_text"): setattr(last_record, f"{dt}_text", results[dt]['text'])
                         if hasattr(last_record, f"{dt}_binary"):
                             b = results[dt].get('bin')
+                            MAX_BIN_SIZE_BF = 15 * 1024 * 1024
                             setattr(last_record, f"{dt}_binary", b if b and len(b) <= MAX_BIN_SIZE_BF else None)
                     db.session.commit()
                     return {'status': 'unchanged', 'version': last_record.version}
@@ -675,7 +613,7 @@ class ArchivalEngine:
             if last_record: return {'status': 'unchanged', 'version': last_record.version}
             else: return {'status': 'failed', 'error': error_msg.strip()}
 
-        # SAVE NEW VERSION
+        # SAVE NEW SNAPSHOT
         status = "partial" if error_msg else "archived"
         current_version = (last_record.version if last_record else 0) + 1
         MAX_BIN_SIZE = 15 * 1024 * 1024 
@@ -716,7 +654,14 @@ class ArchivalEngine:
                 srs_text=results['srs']['text'], sdd_text=results['sdd']['text'],
                 spmp_text=results['spmp']['text'], std_text=results['std']['text'],
                 ri_text=results['ri']['text'], research_paper_text=results['research_paper']['text'],
-                usability_test_text=results['usability_test']['text'], readme_text=results['readme']['text']
+                usability_test_text=results['usability_test']['text'], readme_text=results['readme']['text'],
+                # Set per-file revisions
+                srs_rev=results['srs']['rev'], sdd_rev=results['sdd']['rev'],
+                spmp_rev=results['spmp']['rev'], std_rev=results['std']['rev'],
+                ri_rev=results['ri']['rev'], research_paper_rev=results['research_paper']['rev'],
+                usability_test_rev=results['usability_test']['rev'], presentation_rev=results['presentation']['rev'],
+                source_code_rev=results['source_code']['rev'], database_rev=results['database']['rev'],
+                readme_rev=results['readme']['rev']
             )
             db.session.add(entry)
             db.session.commit()
@@ -746,11 +691,18 @@ class ArchivalEngine:
                     ri_hash=results['ri']['hash'], research_paper_hash=results['research_paper']['hash'],
                     usability_test_hash=results['usability_test']['hash'], presentation_hash=results['presentation']['hash'],
                     source_code_hash=results['source_code']['hash'], database_hash=results['database']['hash'],
-                    readme_hash=results['readme']['hash']
+                    readme_hash=results['readme']['hash'],
+                    # Set per-file revisions in disk fallback
+                    srs_rev=results['srs']['rev'], sdd_rev=results['sdd']['rev'],
+                    spmp_rev=results['spmp']['rev'], std_rev=results['std']['rev'],
+                    ri_rev=results['ri']['rev'], research_paper_rev=results['research_paper']['rev'],
+                    usability_test_rev=results['usability_test']['rev'], presentation_rev=results['presentation']['rev'],
+                    source_code_rev=results['source_code']['rev'], database_rev=results['database']['rev'],
+                    readme_rev=results['readme']['rev']
                 )
                 db.session.add(disk_entry)
                 db.session.commit()
                 return {'status': status, 'version': current_version}
-            except Exception as e2:
+            except:
                  db.session.rollback()
-                 return {'status': 'failed', 'error': f"DB Error: {str(e2)[:50]}"}
+                 return {'status': 'failed', 'error': "Fatal DB Error"}
