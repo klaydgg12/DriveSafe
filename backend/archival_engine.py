@@ -541,7 +541,7 @@ class ArchivalEngine:
                         old_clean = get_clean_text(old_text)
                         
                         is_dup = False
-                        if new_clean and new_clean == old_clean: is_dup = True
+                        if new_clean == old_clean: is_dup = True
                         elif AI_AVAILABLE and new_clean and old_clean:
                             try:
                                 vect = TfidfVectorizer(min_df=1)
