@@ -70,9 +70,9 @@ class RegistrySheetsService:
                 # the longer 'requirements inventory' is tried first so we never collapse SRS
                 # into RI by accident.
                 'ri_link': ['requirements inventory', 'ri file', 'ri_file', 'ri'],
-                'research_paper_link': ['research paper', 'acm format', 'rp'],
+                'research_paper_link': ['research paper', 'acm format', 'rp', 'acm'],
                 'usability_test_link': ['usability test results', 'usability test', 'usability', 'ut'],
-                'presentation_link': ['final presentation', 'presentation ppt', 'presentation_ppt', 'presentation'],
+                'presentation_link': ['final presentation', 'presentation ppt', 'presentation_ppt', 'presentation', 'ppt', 'pr'],
                 'source_code_link': ['zipped source code', 'source code', 'zipped_source'],
                 'github_link': ['github'],
                 'database_link': ['dumped database', 'sql dump', 'database dump', 'database', 'db'],

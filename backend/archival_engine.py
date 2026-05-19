@@ -104,17 +104,49 @@ class ArchivalEngine:
         if len(s) >= 25 and '/' not in s and '.' not in s: return s, False
         return None, False
 
+    @staticmethod
+    def _is_transient(exc):
+        """Network/SSL/timeout errors that are worth retrying. The user's environment
+        (likely an AV that intercepts TLS) frequently aborts the first handshake but
+        succeeds on the second attempt, so a tiny retry loop massively improves
+        archive success rate."""
+        msg = str(exc).lower()
+        return any(k in msg for k in (
+            'ssl', 'timed out', 'timeout', 'connection reset', 'connection aborted',
+            'remote end closed', 'bad record mac', 'wrong version number',
+            'internal error', 'eof occurred', 'broken pipe',
+        ))
+
+    def _with_retry(self, fn, attempts=3, delay=0.6, label=''):
+        last = None
+        for i in range(attempts):
+            try:
+                return fn()
+            except Exception as e:
+                last = e
+                if not self._is_transient(e) or i == attempts - 1:
+                    raise
+                logger.warning(f"   [RETRY {i+1}/{attempts-1}] {label}: {str(e)[:120]}")
+                time.sleep(delay * (i + 1))
+        if last: raise last
+
     def _get_file_metadata(self, file_id):
         FIELDS = 'id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails, size'
         def _fetch(svc, fid):
-            return svc.files().get(fileId=fid, fields=FIELDS, supportsAllDrives=True).execute()
+            return self._with_retry(
+                lambda: svc.files().get(fileId=fid, fields=FIELDS, supportsAllDrives=True).execute(),
+                label=f'metadata({fid[:10]}...)',
+            )
         meta = None
         try:
             meta = _fetch(self.service, file_id)
-        except:
+        except Exception as e:
+            logger.warning(f"   [META] primary failed for {file_id[:10]}...: {str(e)[:120]}")
             if self.sa_service:
                 try: meta = _fetch(self.sa_service, file_id)
-                except: meta = None
+                except Exception as e2: 
+                    logger.warning(f"   [META] SA fallback also failed: {str(e2)[:120]}")
+                    meta = None
         
         if meta and meta.get('mimeType') == 'application/vnd.google-apps.shortcut':
             target_id = (meta.get('shortcutDetails') or {}).get('targetId')
@@ -145,12 +177,15 @@ class ArchivalEngine:
     def _list_children(self, folder_id, service=None):
         svc = service or self.service
         try:
-            res = svc.files().list(
-                q=f"'{folder_id}' in parents and trashed = false",
-                fields="files(id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails)",
-                orderBy="modifiedTime desc", supportsAllDrives=True, includeItemsFromAllDrives=True,
-                pageSize=200
-            ).execute()
+            res = self._with_retry(
+                lambda: svc.files().list(
+                    q=f"'{folder_id}' in parents and trashed = false",
+                    fields="files(id, name, mimeType, modifiedTime, md5Checksum, shortcutDetails)",
+                    orderBy="modifiedTime desc", supportsAllDrives=True, includeItemsFromAllDrives=True,
+                    pageSize=200
+                ).execute(),
+                label=f'list({folder_id[:10]}...)',
+            )
             return res.get('files', []) or []
         except Exception as e:
             logger.warning(f"   [LIST] failed for folder {folder_id}: {str(e)[:120]}")
@@ -258,7 +293,13 @@ class ArchivalEngine:
         
         mime_type = meta.get('mimeType', '').lower() if meta else 'unknown'
         file_name = meta.get('name', 'unknown') if meta else 'Document'
-        is_google = 'google-apps' in mime_type or (original_url and 'docs.google.com' in str(original_url))
+        # Trust mime over URL: Drive renders uploaded .xlsx / .docx / .pptx with
+        # docs.google.com/... viewer URLs even though they are NOT native gdocs and
+        # cannot be exported. Only fall back to URL-sniffing when we have no mime.
+        if mime_type and mime_type != 'unknown':
+            is_google = 'google-apps' in mime_type
+        else:
+            is_google = bool(original_url and 'docs.google.com' in str(original_url))
         is_pdf_target = destination_path.lower().endswith('.pdf')
         strict_pdf_check = is_pdf_target and is_google
 
@@ -292,33 +333,60 @@ class ArchivalEngine:
             except: pass
 
         # 3. API
-        # Helper that tries get_media first, and if Drive answers "fileNotDownloadable"
-        # (which happens whenever the file is actually a native gdoc but our metadata
-        # fetch couldn't tell us so), automatically retries via export_media. This is
-        # what previously surfaced as "Access Denied for Document (mime=unknown)".
+        # get_media first; on "fileNotDownloadable" (native gdoc) fall back to export_media.
+        # On "exportSizeLimitExceeded" (spreadsheet too big for PDF) fall back to xlsx.
+        # All API calls are wrapped in _with_retry so a single SSL hiccup doesn't kill the
+        # archive -- the user's environment has flaky TLS handshakes.
         def _api_download(svc):
-            def _try(use_export):
+            def _do_call(use_export, export_mime='application/pdf'):
                 fh = io.BytesIO()
                 if use_export:
-                    req = svc.files().export_media(fileId=file_id, mimeType='application/pdf')
+                    req = svc.files().export_media(fileId=file_id, mimeType=export_mime)
                 else:
                     req = svc.files().get_media(fileId=file_id, supportsAllDrives=True)
                 downloader = MediaIoBaseDownload(fh, req)
                 done = False
                 while not done: _, done = downloader.next_chunk()
                 return fh.getvalue()
+            def _try(use_export, export_mime='application/pdf'):
+                return self._with_retry(
+                    lambda: _do_call(use_export, export_mime),
+                    label=f'{"export" if use_export else "get"}_media({file_id[:10]}...)',
+                )
             try:
                 data = _try(use_export=is_google)
                 if self.validate_binary(data, is_pdf=strict_pdf_check):
                     return data
             except Exception as e:
                 msg = str(e).lower()
-                # If we tried get_media and Drive says it's not downloadable, the file is
-                # actually a native gdoc -- retry via export_media (PDF) as a last resort.
+                # Native gdoc but we thought it wasn't -- retry as PDF export.
                 if not is_google and ('filenotdownloadable' in msg or 'cannot be downloaded' in msg or '403' in msg):
                     try:
                         data = _try(use_export=True)
                         if self.validate_binary(data, is_pdf=strict_pdf_check):
+                            return data
+                    except Exception as e2:
+                        msg = str(e2).lower()
+                # We thought it WAS a native gdoc but Drive says it isn't exportable
+                # (e.g. an uploaded .xlsx whose viewer URL is docs.google.com/spreadsheets/
+                # so we mis-detected it). Retry with raw get_media -- it'll come down as
+                # the original .xlsx / .docx / .pptx bytes which the Office->PDF
+                # conversion block downstream can then turn into a real PDF.
+                if is_google and ('filenotexportable' in msg or 'not exportable' in msg):
+                    try:
+                        data = _try(use_export=False)
+                        if self.validate_binary(data, is_pdf=False):
+                            return data
+                    except Exception as e3:
+                        msg = str(e3).lower()
+                # Spreadsheet too big for PDF export -- fall back to native .xlsx.
+                # This only helps when destination is NOT a strict-PDF target; otherwise
+                # we'd save .xlsx bytes into a .pdf file. The worker can re-target by
+                # passing a .xlsx destination if needed (future enhancement).
+                if 'exportsizelimitexceeded' in msg and not strict_pdf_check:
+                    try:
+                        data = _try(use_export=True, export_mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                        if self.validate_binary(data, is_pdf=False):
                             return data
                     except: pass
             return None
@@ -338,18 +406,43 @@ class ArchivalEngine:
         self._tls.last_source_hash = hashlib.sha256(final_data).hexdigest()
 
         # Office/Text -> PDF conversion
+        # We ask Drive to ingest the binary as a Google native doc and then export to
+        # PDF. The native target type depends on the source: .docx -> document,
+        # .xlsx -> spreadsheet, .pptx -> presentation. Using the wrong target makes
+        # Drive silently produce an empty/broken result, which is what previously
+        # caused "Failed to load PDF document" for archived xlsx/pptx files.
         if is_pdf_target and not final_data.startswith(b'%PDF-'):
             lower_name = str(file_name).lower()
-            is_office = final_data.startswith(b'PK\x03\x04') or lower_name.endswith(('.docx', '.doc'))
+            mt = (mime_type or '')
+            is_zip_office = final_data.startswith(b'PK\x03\x04')
+            is_doc   = lower_name.endswith(('.docx', '.doc')) or 'wordprocessingml' in mt or 'msword' in mt
+            is_sheet = lower_name.endswith(('.xlsx', '.xls')) or 'spreadsheetml' in mt or 'ms-excel' in mt or 'excel' in mt
+            is_slide = lower_name.endswith(('.pptx', '.ppt')) or 'presentationml' in mt or 'powerpoint' in mt
             is_text = (
                 lower_name.endswith(('.md', '.markdown', '.txt', '.rst', '.readme'))
                 or lower_name == 'readme'
-                or 'text/' in (mime_type or '')
-                or 'markdown' in (mime_type or '')
+                or 'text/' in mt
+                or 'markdown' in mt
             )
-            if is_office or is_text:
-                upload_mime = 'text/plain' if (is_text and not is_office) else 'application/octet-stream'
-                temp_meta = {'name': f"CONV_{int(time.time())}", 'mimeType': 'application/vnd.google-apps.document'}
+            # Pick the upload mime (what we tell Drive the bytes are) and the target
+            # gdoc mime (what we ask Drive to convert them into).
+            upload_mime = None
+            target_mime = None
+            if is_doc or (is_zip_office and not is_sheet and not is_slide):
+                upload_mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                target_mime = 'application/vnd.google-apps.document'
+            elif is_sheet:
+                upload_mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                target_mime = 'application/vnd.google-apps.spreadsheet'
+            elif is_slide:
+                upload_mime = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+                target_mime = 'application/vnd.google-apps.presentation'
+            elif is_text:
+                upload_mime = 'text/plain'
+                target_mime = 'application/vnd.google-apps.document'
+
+            if upload_mime and target_mime:
+                temp_meta = {'name': f"CONV_{int(time.time())}", 'mimeType': target_mime}
                 media = MediaIoBaseUpload(io.BytesIO(final_data), mimetype=upload_mime, resumable=True)
                 try:
                     temp_file = self.service.files().create(body=temp_meta, media_body=media, fields='id', supportsAllDrives=True).execute()
@@ -362,11 +455,18 @@ class ArchivalEngine:
                         d_done = False
                         while not d_done: _, d_done = dld.next_chunk()
                         data = fh.getvalue()
-                        if data.startswith(b'%PDF-'): final_data = data
+                        # Require a real PDF AND a sane minimum size (Drive sometimes
+                        # returns a 1-2KB PDF stub when conversion fails partway).
+                        if data.startswith(b'%PDF-') and len(data) > 1024:
+                            final_data = data
+                            logger.info(f"   [CONV] {file_name} -> PDF via {target_mime.split('.')[-1]} ({len(data)} bytes)")
+                        else:
+                            logger.warning(f"   [CONV] {file_name}: export produced {len(data)} bytes, head={data[:8]!r}")
                     finally:
                         try: self.service.files().delete(fileId=t_id, supportsAllDrives=True).execute()
                         except: pass
-                except: pass
+                except Exception as ce:
+                    logger.warning(f"   [CONV] failed for {file_name}: {str(ce)[:160]}")
 
         if is_pdf_target and not final_data.startswith(b'%PDF-'): raise Exception("PDF Conversion Locked")
         with open(destination_path, 'wb') as f: f.write(final_data)
@@ -416,15 +516,25 @@ class ArchivalEngine:
                     results[doc_type]['url'] = getattr(last_record, f"{doc_type}_original_url", None)
                     return
             
-            if not link: return
+            if not link:
+                # Make this visible -- silent returns previously masked PPT / UT / ACM
+                # cases when the spreadsheet column was simply blank.
+                logger.info(f"   [SKIP] {doc_type.upper()}: no link in spreadsheet (and no prior version to gap-fill)")
+                return
             raw_id, is_folder = self._extract_file_id(link)
-            if not raw_id: return
+            if not raw_id:
+                logger.warning(f"   [SKIP] {doc_type.upper()}: link has no extractable Drive ID -> {str(link)[:140]}")
+                with _lock: error_msg += f"{doc_type.upper()}: bad link; "
+                return
             
             file_id = raw_id
             metadata = None
             if is_folder: file_id, metadata = self._resolve_folder(raw_id, target_hint=doc_type.upper())
             else: metadata = self._get_file_metadata(file_id)
-            if not file_id: return
+            if not file_id:
+                logger.warning(f"   [SKIP] {doc_type.upper()}: folder {raw_id} did not resolve to any candidate file")
+                with _lock: error_msg += f"{doc_type.upper()}: folder empty; "
+                return
 
             try:
                 results[doc_type]['ts'] = metadata.get('modifiedTime', 'Unknown') if metadata else 'Unknown'
@@ -531,9 +641,20 @@ class ArchivalEngine:
             except Exception as e:
                 with _lock: error_msg += f"{doc_type.upper()}: {str(e)[:50]}; "
 
-        # PARALLEL FETCHING
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            pool.map(_worker, doc_types)
+        # SERIAL FETCHING (1 worker)
+        # We intentionally drop concurrency to 1 because many AV / endpoint-security
+        # products (Kaspersky, ESET, BitDefender, Avast HTTPS-scan, corporate MITM
+        # proxies) corrupt TLS streams when several simultaneous HTTPS sockets are
+        # opened to *.googleapis.com -- the symptom is repeated [SSL: BAD_RECORD_MAC]
+        # / [SSL: WRONG_VERSION_NUMBER] / [SSL: UNEXPECTED_RECORD] / IncompleteRead
+        # errors plus silent process termination mid-archive. Serial mode trades
+        # ~4x wall time per project for dramatically higher TLS reliability.
+        # If your environment has no TLS interception you can safely bump this back
+        # up to 4 for ~4x speed.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            # list() forces eager evaluation so any per-doc exception caught inside
+            # _worker is logged immediately rather than swallowed by lazy map().
+            list(pool.map(_worker, doc_types))
 
         if total_changed == 0:
             if last_record and backfilled > 0:

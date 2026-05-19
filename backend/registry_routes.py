@@ -203,7 +203,7 @@ def get_grouped_ledger():
                     "project_id": r.project_id, "project_title": r.project_title,
                     "academic_year": r.academic_year, "workbook_name": r.workbook_name,
                     "db_ids": [],
-                    "documents": { dt: [] for dt in ["srs", "sdd", "spmp", "std", "ri", "source_code", "database", "readme"] }
+                    "documents": { dt: [] for dt in ["srs", "sdd", "spmp", "std", "ri", "research_paper", "usability_test", "presentation", "source_code", "database", "readme"] }
                 }
             
             target = grouped_data[project_key]
@@ -460,6 +460,27 @@ def delete_ledger_item(id):
         db.session.rollback()
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
+_EXT_MIME = {
+    '.pdf':  'application/pdf',
+    '.zip':  'application/zip',
+    '.tar':  'application/x-tar',
+    '.gz':   'application/gzip',
+    '.rar':  'application/vnd.rar',
+    '.7z':   'application/x-7z-compressed',
+    '.sql':  'application/sql',
+    '.db':   'application/octet-stream',
+    '.sqlite': 'application/octet-stream',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.xls':  'application/vnd.ms-excel',
+    '.csv':  'text/csv',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.doc':  'application/msword',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    '.ppt':  'application/vnd.ms-powerpoint',
+    '.txt':  'text/plain',
+    '.md':   'text/markdown',
+}
+
 @registry_bp.route('/download/<int:id>/<string:doc_type>', methods=['GET'], strict_slashes=False)
 @login_required
 def download_file(id, doc_type):
@@ -468,16 +489,27 @@ def download_file(id, doc_type):
         record = db.session.get(ArchivalLedger, id)
         if not record: return jsonify({"error": "Record not found"}), 404
         is_preview = request.args.get('preview') == '1'
-        filename = f"{record.project_title}_{doc_type.upper()}.pdf"
         local_path_rel = getattr(record, f"{doc_type}_local_path")
+        # Derive the real on-disk extension so we serve the file with a correct mime
+        # type. Previously everything was sent as application/pdf which made the
+        # browser try to render .zip / .sql files as PDFs -> "Failed to load PDF".
+        ext = '.pdf'
+        if local_path_rel:
+            ext = os.path.splitext(local_path_rel)[1].lower() or '.pdf'
+        mime = _EXT_MIME.get(ext, 'application/octet-stream')
+        filename = f"{record.project_title}_{doc_type.upper()}{ext}"
+        # If user clicked Preview but the file is not browser-renderable inline,
+        # force download instead so they actually get the file rather than a blank
+        # PDF viewer error page.
+        force_download = (not is_preview) or (mime not in ('application/pdf', 'text/plain', 'text/markdown', 'text/csv'))
         if local_path_rel:
             archive_root = os.getenv('ARCHIVE_ROOT', 'Capstone_Archives')
             full_path = os.path.join(archive_root, local_path_rel)
             if os.path.exists(full_path):
-                return send_file(full_path, mimetype='application/pdf', as_attachment=not is_preview, download_name=filename)
+                return send_file(full_path, mimetype=mime, as_attachment=force_download, download_name=filename)
         content = getattr(record, f"{doc_type}_binary")
         if content:
-            return send_file(io.BytesIO(content), mimetype='application/pdf', as_attachment=not is_preview, download_name=filename)
+            return send_file(io.BytesIO(content), mimetype=mime, as_attachment=force_download, download_name=filename)
         return jsonify({"error": "File content not found"}), 404
     except Exception as e: return jsonify({"error": str(e)}), 500
 

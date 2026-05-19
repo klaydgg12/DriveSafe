@@ -18,9 +18,24 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 # Load environment variables
 dotenv.load_dotenv()
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+# Setup logging -- console + persistent file so we can actually inspect what happened
+# during archival (the console wraps + truncates long tracebacks on Windows).
+_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'archive_debug.log')
+_root_logger = logging.getLogger()
+_root_logger.setLevel(logging.INFO)
+# Avoid attaching duplicate handlers when Flask's reloader re-imports this module.
+if not any(isinstance(h, logging.FileHandler) and getattr(h, 'baseFilename', '') == _LOG_PATH for h in _root_logger.handlers):
+    _fh = logging.FileHandler(_LOG_PATH, mode='a', encoding='utf-8')
+    _fh.setLevel(logging.INFO)
+    _fh.setFormatter(logging.Formatter('%(asctime)s [%(threadName)s] %(levelname)s %(name)s: %(message)s'))
+    _root_logger.addHandler(_fh)
+if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in _root_logger.handlers):
+    _sh = logging.StreamHandler()
+    _sh.setLevel(logging.INFO)
+    _sh.setFormatter(logging.Formatter('%(asctime)s [%(threadName)s] %(levelname)s %(name)s: %(message)s'))
+    _root_logger.addHandler(_sh)
 logger = logging.getLogger(__name__)
+logger.info(f"=== archive_debug.log file handler attached at {_LOG_PATH} ===")
 
 from models import db, User, ArchivalLedger
 
